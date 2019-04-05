@@ -14,6 +14,15 @@ parameters["std_out_all_processes"] = False
 parameters["form_compiler"]["optimize"]     = True
 parameters["form_compiler"]["cpp_optimize"] = True
 
+"""
+class NavierStokesEquations:
+    def __init__(self, W, isTransient=False, timeStepping='backward_euler'):
+        v, q = TestFunctions(W)
+        u, p = TrialFunctions(W)
+        self.d = Function(W)
+        self.momEqn = 
+"""
+
 class NavierStokesSolver(NonlinearVariationalSolver):
     def __init__(self, problem=None):
         self.problem = problem
@@ -28,9 +37,9 @@ class NavierStokesSolver(NonlinearVariationalSolver):
             
     def solve(self, NS=None):
         if NS!=None:
-            problem = NonlinearVariationalProblem(NS.F, NS.d, NS.bcs, NS.J)
+            problem = NonlinearVariationalProblem(NS.L, NS.d, NS.bcs, NS.a)
         elif self.problem!=None:
-            problem = NonlinearVariationalProblem(self.problem.F, self.problem.d, self.problem.bcs, self.problem.J)
+            problem = NonlinearVariationalProblem(self.problem.L, self.problem.d, self.problem.bcs, self.problem.a)
         else:
             error("Please specify the non-linear problem to be solved!")
         NonlinearVariationalSolver.__init__(self, problem)
@@ -49,7 +58,7 @@ class NavierStokesSolver(NonlinearVariationalSolver):
         prm['maximum_iterations'] = 25
         prm['relaxation_parameter'] = 1.0
     """
-class NavierStokesSystem:
+class NavierStokesSystem(NonlinearVariationalProblem):
     def __init__(self, W=None, d=None, rho=1.0, nu=0.01, bcs=[], isTransient=True, stepping=["Euler", 0.5], form=True):
         #self.FunctionSpace = W
         #self.Function = d
@@ -61,15 +70,16 @@ class NavierStokesSystem:
             v, q = TestFunctions(W)
             u, p = TrialFunctions(W)
             if form:
-                F = ( nu*inner(grad(u), grad(v)) + inner(dot(grad(u), u), v) - p*div(v) + q*div(u) ) * dx
+                L = ( nu*inner(grad(u), grad(v)) + inner(dot(grad(u), u), v) - p*div(v) + q*div(u) ) * dx
                 self.d = d
-                self.constructJacobi(F, self.d)
+                self.constructJacobi(L, self.d)
         else:
             self.canForm = False
     #def setFunctionSpace(self, W, form=False):
-    def constructJacobi(self, F, d):
-        self.F = action(F, d)
-        self.J = derivative(self.F, d)
+    def constructJacobi(self, L, d):
+        self.L = action(L, d)
+        print(self.L)
+        self.a = derivative(self.L, d)
 
     def setBCs(self, bcs):
         self.bcs = bcs
