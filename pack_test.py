@@ -21,7 +21,7 @@ based on field split PCDR preconditioning."""
 
 # Begin demo
 from dolfin import *
-from matplotlib import pyplot
+#from matplotlib import pyplot
 import numpy as np
 
 from fenapack import PCDKrylovSolver
@@ -48,11 +48,12 @@ parser.add_argument("--dm", action='store_true', dest="mumps_debug",
                     help="debug MUMPS")
 parser.add_argument("--dt", type=float, dest="dt", default=0.2,
                     help="time step")
-parser.add_argument("--t_end", type=float, dest="t_end", default=5.0,
+parser.add_argument("--t_end", type=float, dest="t_end", default=30.0,
                     help="termination time")
 args = parser.parse_args(sys.argv[1:])
 
 parameters["form_compiler"]["quadrature_degree"] = 3
+parameters["std_out_all_processes"] = False
 # Load mesh from file and refine uniformly
 mesh = Mesh("mesh_lshape.xml")
 for i in range(args.level):
@@ -83,8 +84,9 @@ W = FunctionSpace(mesh, P2*P1)
 bc0 = DirichletBC(W.sub(0), (0.0, 0.0), boundary_markers, 0)
 
 # Parabolic inflow BC
-inflow = Expression(("(1.0 - exp(-5.0*t))*4.0*x[1]*(1.0 - x[1])", "0.0"),
-                     t=0.0, degree=2)
+inlet_velocity = 1.0
+inflow = Expression(("4.0*inlet*(1.0 - exp(-5.0*t))*x[1]*(1.0 - x[1])", "0.0"),
+                     inlet=inlet_velocity, t=1.0e6, degree=2)
 bc1 = DirichletBC(W.sub(0), inflow, boundary_markers, 1)
 
 # Artificial BC for PCD preconditioner
@@ -94,9 +96,8 @@ elif args.pcd_variant == "BRM2":
     bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 2)
 
 # Provide some info about the current problem
-info("Reynolds number: Re = %g" % (2.0/args.viscosity))
+info("Reynolds number: Re = %g" % (2.0*inlet_velocity/args.viscosity))
 info("Dimension of the function space: %g" % W.dim())
-
 # Arguments and coefficients of the form
 u, p = TrialFunctions(W)
 v, q = TestFunctions(W)
@@ -104,29 +105,40 @@ w = Function(W)
 w0 = Function(W)
 u_, p_ = split(w)
 u0_, p0_ = split(w0)
-nu = Constant(args.viscosity)
+#u0_, p0_ = w0.split(True) #split using deepcopy
+#nu = Constant(args.viscosity)
+final_nu = args.viscosity
+#nu = final_nu
+nu = Expression("nu_t",nu_t=1000*final_nu,degree=2,domain=mesh)
 idt = Constant(1.0/args.dt)
-
 h = CellDiameter(mesh)
-vel_norm = sqrt(dot(u0_,u0_))
-    # SUPG & PSPG stabilization parameters
-tau_supg = h/2#( (2.0*vnorm/h)**2 + 9*(4.0*nu/h**2)**2 )**(-0.5)
-tau_pspg = h**2/2
+ramp_time = 6.0/(inlet_velocity*0.5)
+
+#w.interpolate(Constant((0.01,0.01,0.0)))
+#vnorm = sqrt(dot(u0_,u0_))
+#vnorm = u0_.vector().norm("l2")
+vnorm = norm(w.sub(0),"l2")
+# SUPG & PSPG stabilization parameters
+#tau_supg = h/(2.0*vnorm)
+#tau_pspg = h/(2.0*vnorm)
+#tau_lsic = vnorm*h/2.0
+tau_supg = h/2.0
+tau_pspg = h/2.0
+tau_lsic = h/2.0
+
 # Nonlinear equation
-MomEqn = idt*(u_ - u0_)\
-    - div(nu*grad(u_))\
-    + grad(u_)*u_\
-    + grad(p_)
- 
+MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
+F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
       idt*inner(u_ - u0_, v)
     + nu*inner(grad(u_), grad(v))
     + inner(dot(grad(u_), u_), v)
     - p_*div(v)
     + q*div(u_)
-    + (tau_supg*inner(grad(v)*u_,MomEqn))
-    + (tau_pspg*inner(grad(q),MomEqn))
+    #+ (tau_supg*inner(grad(v)*u_,MomEqn))
+    #+ (tau_pspg*inner(grad(q),MomEqn))
 )*dx
+F = F + F_stab
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -138,9 +150,10 @@ if args.nls == "picard":
     )*dx
 elif args.nls == "newton":
     J = derivative(F, w)
+    J_pc = None #derivative(F+F_stab, w)
 
 # Add stabilization for AMG 00-block
-J_pc = None
+#J_pc = None
 """
 if args.ls == "iterative":
     delta = StabilizationParameterSD(w.sub(0), nu)
@@ -151,19 +164,19 @@ elif args.ls == "direct":
 
 # PCD operators
 mu = idt*inner(u, v)*dx
-mp = Constant(1.0/nu)*p*q*dx
-kp = Constant(1.0/nu)*dot(grad(p), u_)*q*dx
+mp = 1.0/nu*p*q*dx
+kp = 1.0/nu*dot(grad(p), u_)*q*dx
 ap = inner(grad(p), grad(q))*dx
 if args.pcd_variant == "BRM2":
     n = FacetNormal(mesh)
     ds = Measure("ds", subdomain_data=boundary_markers)
     # TODO: What about the reaction term? Does it appear here?
-    kp -= Constant(1.0/nu)*dot(u_, n)*p*q*ds(1)
+    kp -= 1.0/nu*dot(u_, n)*p*q*ds(1)
     #kp -= Constant(1.0/nu)*dot(u_, n)*p*q*ds(0)  # TODO: Is this beneficial?
 
 # Collect forms to define nonlinear problem
 pcd_assembler = PCDAssembler(J, F, [bc0, bc1],
-                             ap=ap, kp=kp, mp=mp, mu=mu, bcs_pcd=bc_pcd)
+                             J_pc, ap=ap, kp=kp, mp=mp, mu=mu, bcs_pcd=bc_pcd)
 assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
 problem = PCDNonlinearProblem(pcd_assembler)
 
@@ -171,12 +184,13 @@ problem = PCDNonlinearProblem(pcd_assembler)
 PETScOptions.clear()
 linear_solver = PCDKrylovSolver(comm=mesh.mpi_comm())
 linear_solver.parameters["relative_tolerance"] = 1e-4
+linear_solver.parameters["absolute_tolerance"] = 1e-8
 #PETScOptions.set("ksp_monitor")
-PETScOptions.set("ksp_gmres_restart", 150)
 
 # Set up subsolvers
 PETScOptions.set("fieldsplit_p_pc_python_type", "fenapack.PCDRPC_" + args.pcd_variant)
 if args.ls == "iterative":
+    PETScOptions.set("ksp_gmres_restart", 150)
     PETScOptions.set("fieldsplit_u_ksp_type", "richardson")
     PETScOptions.set("fieldsplit_u_ksp_max_it", 1)
     PETScOptions.set("fieldsplit_u_pc_type", "hypre")
@@ -205,18 +219,34 @@ linear_solver.set_from_options()
 
 # Set up nonlinear solver
 solver = PCDNewtonSolver(linear_solver)
-solver.parameters["relative_tolerance"] = 1e-3
+solver.parameters["relative_tolerance"] = 3e-3
+
+# files
+ufile = File("results/velocity.pvd")
+pfile = File("results/pressure.pvd")
 
 # Solve problem
 t = 0.0
 time_iters = 0
 krylov_iters = 0
 solution_time = 0.0
+
 while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     # Move to current time level
     t += args.dt
     time_iters += 1
+    
+    # move from ramping to computing
+    """
+    if t < ramp_time:
+        if ramp_time/2.0 - t > 0:
+            nu.nu_t = (np.exp(-t) - np.exp(-ramp_time/2.0))*999.0*args.viscosity + args.viscosity
 
+        else:
+            nu.nu_t = args.viscosity
+    """
+    nu.nu_t = final_nu
+    info("Viscosity: %g" % nu.nu_t)
     # Update boundary conditions
     inflow.t = t
 
@@ -226,6 +256,11 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         newton_iters, converged = solver.solve(problem, w.vector())
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
+
+    if time_iters%10==0:
+        u_out, p_out = w.split()
+        ufile << u_out
+        pfile << p_out
 
     # Update variables at previous time level
     w0.assign(w)
@@ -250,6 +285,7 @@ print(tab)
 u, p = w.split()
 size = MPI.size(mesh.mpi_comm())
 rank = MPI.rank(mesh.mpi_comm())
+"""
 pyplot.figure()
 pyplot.subplot(2, 1, 1)
 plot(u, title="velocity")
@@ -260,3 +296,5 @@ pyplot.figure()
 plot(p, title="pressure", mode="warp")
 pyplot.savefig("figure_warp_size{}_rank{}.pdf".format(size, rank))
 pyplot.show()
+"""
+
