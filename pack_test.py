@@ -29,8 +29,10 @@ from fenapack import PCDAssembler
 from fenapack import PCDNewtonSolver, PCDNonlinearProblem
 from fenapack import StabilizationParameterSD
 
+from mpi4py import MPI as pmp
 import argparse, sys, os, gc
 
+commmpi = pmp.COMM_WORLD
 # Parse input arguments
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=
                                  argparse.ArgumentDefaultsHelpFormatter)
@@ -55,7 +57,11 @@ args = parser.parse_args(sys.argv[1:])
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 # Load mesh from file and refine uniformly
-mesh = Mesh("mesh_lshape.xml")
+#mesh = Mesh("mesh_lshape.xml")
+mesh = Mesh()
+fid = HDF5File(commmpi, 'mesh.h5', 'r')
+fid.read(mesh, 'mesh', False)
+fid.close()
 for i in range(args.level):
     mesh = refine(mesh)
 
@@ -264,6 +270,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
 
     # Update variables at previous time level
     w0.assign(w)
+
 
 # Report timings
 list_timings(TimingClear.clear, [TimingType.wall, TimingType.user])
