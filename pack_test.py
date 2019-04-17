@@ -52,6 +52,8 @@ parser.add_argument("--dt", type=float, dest="dt", default=0.2,
                     help="time step")
 parser.add_argument("--t_end", type=float, dest="t_end", default=30.0,
                     help="termination time")
+parser.add_argument("--ts_per_out", type=int, dest="ts_per_out", default=1,
+                    help="number of ts per output file")
 args = parser.parse_args(sys.argv[1:])
 
 parameters["form_compiler"]["quadrature_degree"] = 3
@@ -102,7 +104,7 @@ P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 W = FunctionSpace(mesh, P2*P1)
 
 u0 = 1.0
-u_in = Expression(("0.0","0.0","u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*exp()"),u0=u0,degree=2)
+u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.5*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
@@ -116,7 +118,7 @@ elif args.pcd_variant == "BRM2":
     bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 2)
 
 # Provide some info about the current problem
-info("Reynolds number: Re = %g" % (0.07*u0/args.viscosity))
+info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
 info("Dimension of the function space: %g" % W.dim())
 # Arguments and coefficients of the form
 u, p = TrialFunctions(W)
@@ -268,6 +270,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     nu.nu_t = final_nu
     info("Viscosity: %g" % nu.nu_t)
     # Update boundary conditions
+    u_in.t = t
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
@@ -276,7 +279,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
 
-    if time_iters%10==0:
+    if time_iters % args.ts_per_out==0:
         u_out, p_out = w.split()
         ufile << u_out
         pfile << p_out
