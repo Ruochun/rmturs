@@ -57,7 +57,7 @@ args = parser.parse_args(sys.argv[1:])
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 # Load mesh from file and refine uniformly
-mesh = Mesh("challenge.xml")
+mesh = Mesh("bluff_body_32_8_8.xml")
 """
 mesh = Mesh()
 fid = HDF5File(commmpi, 'mesh.h5', 'r')
@@ -79,12 +79,12 @@ class Gamma0(SubDomain):
 # Inlet bc
 class Gamma1(SubDomain):
     def inside(self, x, on_boundary):
-        return on_boundary and x[2]>0.13-eps
+        return on_boundary and x[0]<eps
 
 # Oultet bc
 class Gamma2(SubDomain):
     def inside(self, x, on_boundary):
-        return on_boundary and (x[0]>0.1-eps)# or x[0]<-1.0+eps)
+        return on_boundary and (x[0]>4.0-eps)# or x[0]<-1.0+eps)
 
 
 
@@ -102,7 +102,7 @@ P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 W = FunctionSpace(mesh, P2*P1)
 
 u0 = 1.0
-u_in = Expression(("0.0","0.0","-u0*(0.035+x[0])*(0.035-x[0])*(0.035+x[1])*(0.035-x[1])/pow(0.035,4)"),u0=u0,degree=2)
+u_in = Expression(("0.0","0.0","u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*exp()"),u0=u0,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
