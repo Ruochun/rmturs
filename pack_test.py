@@ -52,6 +52,8 @@ parser.add_argument("--dt", type=float, dest="dt", default=0.2,
                     help="time step")
 parser.add_argument("--t_end", type=float, dest="t_end", default=30.0,
                     help="termination time")
+parser.add_argument("--ts_per_out", type=int, dest="ts_per_out", default=1,
+                    help="number of ts per output file")
 args = parser.parse_args(sys.argv[1:])
 
 parameters["form_compiler"]["quadrature_degree"] = 3
@@ -263,7 +265,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
 
-    if time_iters%10==0:
+    if time_iters%args.ts_per_out==0:
         u_out, p_out = w.split()
         ufile << u_out
         pfile << p_out
