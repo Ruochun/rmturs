@@ -184,7 +184,8 @@ if args.pcd_variant == "BRM2":
 
 # Collect forms to define nonlinear problem
 pcd_assembler = PCDAssembler(J, F, [bc0, bc1],
-                             J_pc, ap=ap, kp=kp, mp=mp, mu=mu, bcs_pcd=bc_pcd)
+                             #J_pc, ap=ap, kp=kp, mp=mp, mu=mu, bcs_pcd=bc_pcd)
+                            J_pc, ap=ap, kp=kp, mp=mp, bcs_pcd=bc_pcd)
 assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
 problem = PCDNonlinearProblem(pcd_assembler)
 
