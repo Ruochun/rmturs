@@ -122,6 +122,7 @@ idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
 ramp_time = 6.0/(inlet_velocity*0.5)
 
+info("Courant number: Co = %g" % (inlet_velocity*args.dt/h))
 #w.interpolate(Constant((0.01,0.01,0.0)))
 #vnorm = sqrt(dot(u0_,u0_))
 #vnorm = u0_.vector().norm("l2")
