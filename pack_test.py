@@ -31,6 +31,7 @@ from fenapack import StabilizationParameterSD
 
 from mpi4py import MPI as pmp
 import argparse, sys, os, gc
+import time
 
 commmpi = pmp.COMM_WORLD
 # Parse input arguments
@@ -59,13 +60,15 @@ args = parser.parse_args(sys.argv[1:])
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 # Load mesh from file and refine uniformly
-mesh = Mesh("bluff_body_32_8_8.xml")
-"""
+#mesh = Mesh("/home/rzhang294/3D_Turb/bluff_body_32_8_8.xml")
+rank = commmpi.Get_rank()
+root = 0
+
 mesh = Mesh()
-fid = HDF5File(commmpi, 'mesh.h5', 'r')
+fid = HDF5File(commmpi, '/home/rzhang294/3D_Turb/bench1_mesh.h5', 'r')
 fid.read(mesh, 'mesh', False)
 fid.close()
-"""
+
 for i in range(args.level):
     mesh = refine(mesh)
 
@@ -104,7 +107,7 @@ P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 W = FunctionSpace(mesh, P2*P1)
 
 u0 = 1.0
-u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.5*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
+u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
@@ -136,6 +139,7 @@ idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
 #ramp_time = 6.0/(u0*0.5)
 
+info("Courant number: Co = %g" % (u0*args.dt/h))
 #w.interpolate(Constant((0.01,0.01,0.0)))
 #vnorm = sqrt(dot(u0_,u0_))
 #vnorm = u0_.vector().norm("l2")
@@ -187,7 +191,7 @@ elif args.ls == "direct":
 # PCD operators
 mu = idt*inner(u, v)*dx
 mp = 1.0/nu*p*q*dx
-kp = 1.0/nu*dot(grad(p), u_)*q*dx
+kp = 1.0/nu*(dot(grad(p), u_) + idt*p)*q*dx
 ap = inner(grad(p), grad(q))*dx
 if args.pcd_variant == "BRM2":
     n = FacetNormal(mesh)
@@ -198,7 +202,7 @@ if args.pcd_variant == "BRM2":
 
 # Collect forms to define nonlinear problem
 pcd_assembler = PCDAssembler(J, F, bcu,
-                             J_pc, ap=ap, kp=kp, mp=mp, mu=mu, bcs_pcd=bc_pcd)
+                             J_pc, ap=ap, kp=kp, mp=mp, bcs_pcd=bc_pcd)
 assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
 problem = PCDNonlinearProblem(pcd_assembler)
 
@@ -207,29 +211,53 @@ PETScOptions.clear()
 linear_solver = PCDKrylovSolver(comm=mesh.mpi_comm())
 linear_solver.parameters["relative_tolerance"] = 1e-4
 linear_solver.parameters["absolute_tolerance"] = 1e-8
-#PETScOptions.set("ksp_monitor")
+PETScOptions.set("ksp_monitor")
 
 # Set up subsolvers
-PETScOptions.set("fieldsplit_p_pc_python_type", "fenapack.PCDRPC_" + args.pcd_variant)
+PETScOptions.set("fieldsplit_p_pc_python_type", "fenapack.PCDPC_" + args.pcd_variant)
 if args.ls == "iterative":
-    PETScOptions.set("ksp_gmres_restart", 150)
-    PETScOptions.set("fieldsplit_u_ksp_type", "richardson")
-    PETScOptions.set("fieldsplit_u_ksp_max_it", 1)
+    PETScOptions.set("ksp_type", "fgmres")
+    PETScOptions.set("fieldsplit_u_ksp_rtol", 1e-4)
+    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_rtol", 1e-4)
+    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_rtol", 1e-4)
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_rtol", 1e-4)
+    PETScOptions.set("fieldsplit_u_ksp_monitor")
+    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
+    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
+    PETScOptions.set("ksp_gmres_restart", 100)
+
+    PETScOptions.set("fieldsplit_u_ksp_type", "gmres")
     PETScOptions.set("fieldsplit_u_pc_type", "hypre")
     PETScOptions.set("fieldsplit_u_pc_hypre_type", "boomeramg")
-    PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_type", "richardson")
-    PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_max_it", 1)
-    PETScOptions.set("fieldsplit_p_PCD_Rp_pc_type", "hypre")
-    PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_type", "boomeramg")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_type", "richardson")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_max_it", 2)
+    PETScOptions.set("fieldsplit_u_pc_hypre_boomeramg_coarsen_type", "hmis")
+    PETScOptions.set("fieldsplit_u_pc_hypre_boomeramg_interp_type", "ext+i")
+    PETScOptions.set("fieldsplit_u_pc_hypre_boomeramg_p_max", 4)
+    PETScOptions.set("fieldsplit_u_hypre_boomeramg_agg_nl", 1)
+
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_type", "cg")
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_type", "jacobi")
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_type", "boomeramg")
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_coarsen_type", "hmis")
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_interp_type", "ext+i")
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_p_max", 4)
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_agg_nl", 1)
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_type", "richardson")
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_max_it", 1)
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_type", "hypre")
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_type", "boomeramg")
+
+    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_type", "cg")
     PETScOptions.set("fieldsplit_p_PCD_Ap_pc_type", "hypre")
     PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_type", "boomeramg")
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_type", "chebyshev")
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_max_it", 5)
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_chebyshev_eigenvalues", "0.5, 2.0")
-    #PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_chebyshev_esteig", "1,0,0,1")  # FIXME: What does it do?
+    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_boomeramg_coarsen_type", "hmis")
+    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_boomeramg_interp_type", "ext+i")
+    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_boomeramg_p_max", 4)
+    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_boomeramg_agg_nl", 1)
+
+    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_type", "cg")
     PETScOptions.set("fieldsplit_p_PCD_Mp_pc_type", "jacobi")
+
+
 elif args.ls == "direct" and args.mumps_debug:
     # Debugging MUMPS
     PETScOptions.set("fieldsplit_u_mat_mumps_icntl_4", 2)
@@ -244,8 +272,9 @@ solver = PCDNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 3e-3
 
 # files
-ufile = File("results/velocity.pvd")
-pfile = File("results/pressure.pvd")
+#if rank == 0:
+ufile = File("results"+str(time.time())+"/velocity.pvd")
+pfile = File("results"+str(time.time())+"/pressure.pvd")
 
 # Solve problem
 t = 0.0
