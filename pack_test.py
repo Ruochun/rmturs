@@ -1,23 +1,6 @@
 """Transient flow over a backward-facing step. Incompressible Navier-Stokes
 equations are solved using Newton/Picard iterative method. Linear solver is
-based on field split PCDR preconditioning."""
-
-# Copyright (C) 2015-2018 Martin Rehor, Jan Blechta
-#
-# This file is part of FENaPack.
-#
-# FENaPack is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Lesser General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# FENaPack is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Lesser General Public License for more details.
-#
-# You should have received a copy of the GNU Lesser General Public License
-# along with FENaPack.  If not, see <http://www.gnu.org/licenses/>.
+based on field split PCD preconditioning."""
 
 # Begin demo
 from dolfin import *
@@ -60,12 +43,12 @@ args = parser.parse_args(sys.argv[1:])
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 # Load mesh from file and refine uniformly
-#mesh = Mesh("/home/rzhang294/3D_Turb/bluff_body_32_8_8.xml")
+#mesh = Mesh("./bluff_body_32_8_8.xml")
 rank = commmpi.Get_rank()
 root = 0
 
 mesh = Mesh()
-fid = HDF5File(commmpi, '/home/rzhang294/3D_Turb/bench1_mesh.h5', 'r')
+fid = HDF5File(commmpi, './benchi2_simplified.h5', 'r')
 fid.read(mesh, 'mesh', False)
 fid.close()
 
@@ -104,15 +87,35 @@ ds = Measure("ds", domain=mesh, subdomain_data=boundary_markers)
 # Build Taylor-Hood function space
 P2 = VectorElement("Lagrange", mesh.ufl_cell(), 1)
 P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
-W = FunctionSpace(mesh, P2*P1)
+P3 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
+P4 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
+#W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
+W = FunctionSpace(mesh, MixedElement([P2, P1, P3, P4]))
 
 u0 = 1.0
 u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
+x_normal = Expression(("1.0","0.0","0.0"),degree=1)
+u_in_xnormal = Expression("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))",u0=u0,t=0.0,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
 bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
-bcu = [bc00, bc1]
+#bcu = [bc00, bc1]
+
+# BC for turbulence models k and e
+bc_nsk = DirichletBC(W.sub(2), 0.0, boundary_markers, 0)
+bc_nse = DirichletBC(W.sub(3), 0.0, boundary_markers, 0)
+
+Cmu = 0.09
+turb_intensity = 0.05
+turb_lengthscale = 0.038*1.0
+k_in = 1.5*(u_in_xnormal*turb_intensity)**2
+e_in = Cmu*(k_in**1.5)/turb_lengthscale
+bc_ink = DirichletBC(W.sub(2).collapse(), k_in, boundary_markers, 1)
+bc_ine = DirichletBC(W.sub(3).collapse(), e_in, boundary_markers, 1)
+
+# all BCs in a package
+bcu = [bc00, bc1, bc_nsk, bc_nse, bc_ink, bc_ine]
 
 # Artificial BC for PCD preconditioner
 if args.pcd_variant == "BRM1":
@@ -124,22 +127,23 @@ elif args.pcd_variant == "BRM2":
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
 info("Dimension of the function space: %g" % W.dim())
 # Arguments and coefficients of the form
-u, p = TrialFunctions(W)
-v, q = TestFunctions(W)
+(u, p, k, e) = TrialFunctions(W)
+(v, q, vk, ve) = TestFunctions(W)
 w = Function(W)
 w0 = Function(W)
-u_, p_ = split(w)
-u0_, p0_ = split(w0)
+(u_, p_, k_, e_) = split(w)
+(u0_, p0_, k0_, e0_) = split(w0)
+info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
 #nu = Constant(args.viscosity)
 final_nu = args.viscosity
 #nu = final_nu
-nu = Expression("nu_t",nu_t=1000*final_nu,degree=2,domain=mesh)
+nu = Expression("nu",nu=1000*final_nu,degree=2,domain=mesh)
 idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
 #ramp_time = 6.0/(u0*0.5)
 
-info("Courant number: Co = %g" % (u0*args.dt/h))
+info("Courant number: Co = %g ~ %g" % (u0*args.dt/mesh.hmax(), u0*args.dt/mesh.hmin()))
 #w.interpolate(Constant((0.01,0.01,0.0)))
 #vnorm = sqrt(dot(u0_,u0_))
 #vnorm = u0_.vector().norm("l2")
@@ -153,18 +157,26 @@ tau_pspg = h/2.0
 tau_lsic = h/2.0
 
 # Nonlinear equation
+nu_t = Cmu*(k_**2)/e_
+sigma_e = 1.3
+C1 = 1.44
+C2 = 1.92
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
       idt*inner(u_ - u0_, v)
-    + nu*inner(grad(u_), grad(v))
+    + (nu+nu_t)*inner(grad(u_), grad(v)) + inner(outer(grad(nu_t), v), grad(u_)) + v*grad(u_)*grad(nu_t)
     + inner(dot(grad(u_), u_), v)
-    - p_*div(v)
+    - (p_ + 2.0/3.0*k_)*div(v)
     + q*div(u_)
-    #+ (tau_supg*inner(grad(v)*u_,MomEqn))
-    #+ (tau_pspg*inner(grad(q),MomEqn))
 )*dx
+F_k = (idt*(k_ - k0_)*vk + div(k_*u_)*vk + nu_t*dot(grad(k_), grad(vk))\
+       - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
+F_e = (idt*(e_ - e0_)*ve + div(e_*u_)*ve + nu_t*dot(grad(e_), grad(ve))/sigma_e\
+       - C1*nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T))*ve*e_/k_ + C2*(e_**2)*ve/k_)*dx
 F = F + F_stab
+F = F + F_k
+F = F + F_e
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -190,8 +202,8 @@ elif args.ls == "direct":
 
 # PCD operators
 mu = idt*inner(u, v)*dx
-mp = 1.0/nu*p*q*dx
-kp = 1.0/nu*(dot(grad(p), u_) + idt*p)*q*dx
+mp = 1.0/(nu+nu_t)*p*q*dx
+kp = 1.0/(nu+nu_t)*(dot(grad(p), u_) + idt*p)*q*dx
 ap = inner(grad(p), grad(q))*dx
 if args.pcd_variant == "BRM2":
     n = FacetNormal(mesh)
@@ -273,8 +285,8 @@ solver.parameters["relative_tolerance"] = 3e-3
 
 # files
 #if rank == 0:
-ufile = File("results"+str(time.time())+"/velocity.pvd")
-pfile = File("results"+str(time.time())+"/pressure.pvd")
+ufile = File("results/velocity.pvd")
+pfile = File("results/pressure.pvd")
 
 # Solve problem
 t = 0.0
@@ -291,15 +303,16 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     """
     if t < ramp_time:
         if ramp_time/2.0 - t > 0:
-            nu.nu_t = (np.exp(-t) - np.exp(-ramp_time/2.0))*999.0*args.viscosity + args.viscosity
+            nu.nu = (np.exp(-t) - np.exp(-ramp_time/2.0))*999.0*args.viscosity + args.viscosity
 
         else:
-            nu.nu_t = args.viscosity
+            nu.nu = args.viscosity
     """
-    nu.nu_t = final_nu
-    info("Viscosity: %g" % nu.nu_t)
+    nu.nu = final_nu
+    info("Viscosity: %g" % nu.nu)
     # Update boundary conditions
     u_in.t = t
+    u_in_xnormal.t = t
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
