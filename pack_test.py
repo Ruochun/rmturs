@@ -92,8 +92,6 @@ W = FunctionSpace(mesh, MixedElement([P2, P1]))
 
 u0 = 1.0
 u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
-#x_normal = Expression(("1.0","0.0","0.0"),degree=1)
-#u_in_xnormal = Expression("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))",u0=u0,t=0.0,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
@@ -113,7 +111,7 @@ info("Dimension of the function space: %g" % W.dim())
 (u, p) = TrialFunctions(W)
 (v, q) = TestFunctions(W)
 w = Function(W)
-#w = interpolate(Expression(("1.0","0.0","0.0","0.0","k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W)
+w = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
 w0 = Function(W)
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
@@ -134,15 +132,19 @@ info("Courant number: Co = %g ~ %g" % (u0*args.dt/mesh.hmax(), u0*args.dt/mesh.h
 #vnorm = u0_.vector().norm("l2")
 vnorm = norm(w.sub(0),"l2")
 # SUPG & PSPG stabilization parameters
-#tau_supg = h/(2.0*vnorm)
-#tau_pspg = h/(2.0*vnorm)
-#tau_lsic = vnorm*h/2.0
-tau_supg = h/2.0
-tau_pspg = h/2.0
-tau_lsic = h/2.0
+h_vgn = mesh.hmin()
+h_rgn = mesh.hmin()
+tau_sugn1 = h_vgn/(2.0)#*vnorm)
+tau_sugn2 = idt/2.0
+tau_sugn3 = h_rgn**2/(4.0*args.viscosity)
+tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
+tau_pspg = tau_supg
+tau_lsic = tau_supg#*vnorm**2
 
 # Nonlinear equation
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
+u_prime = -tau_supg*MomEqn
+p_prime = -tau_lsic*div(u_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
       idt*inner(u_ - u0_, v)
@@ -151,7 +153,8 @@ F = (
     - (p_)*div(v)
     + q*div(u_)
 )*dx
-F = F + F_stab
+F_VMS = (dot(v, dot(u_prime, grad(u_))) - dot(dot(u_prime, grad(v)), u_prime))*dx
+F = F + F_stab + F_VMS
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -198,7 +201,7 @@ problem = PCDNonlinearProblem(pcd_assembler)
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
 linear_solver = PCDKrylovSolver(comm=mesh.mpi_comm())
-linear_solver.parameters["relative_tolerance"] = 1e-4
+linear_solver.parameters["relative_tolerance"] = 4e-4
 linear_solver.parameters["absolute_tolerance"] = 1e-8
 PETScOptions.set("ksp_monitor")
 
@@ -210,9 +213,9 @@ if args.ls == "iterative":
     PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_rtol", 1e-4)
     PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_rtol", 1e-4)
     #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_rtol", 1e-4)
-    PETScOptions.set("fieldsplit_u_ksp_monitor")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
+    #PETScOptions.set("fieldsplit_u_ksp_monitor")
+    #PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
+    #PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
     PETScOptions.set("ksp_gmres_restart", 100)
 
     PETScOptions.set("fieldsplit_u_ksp_type", "gmres")
