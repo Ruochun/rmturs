@@ -38,20 +38,22 @@ parser.add_argument("--t_end", type=float, dest="t_end", default=30.0,
                     help="termination time")
 parser.add_argument("--ts_per_out", type=int, dest="ts_per_out", default=1,
                     help="number of ts per output file")
+parser.add_argument("--ts_per_ke", type=int, dest="ts_per_ke", default=1,
+                    help="number of ts per k-e computation")
 args = parser.parse_args(sys.argv[1:])
 
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 # Load mesh from file and refine uniformly
-#mesh = Mesh("./bluff_body_32_8_8.xml")
+mesh = Mesh("./bluff_body_32_8_8.xml")
 rank = commmpi.Get_rank()
 root = 0
-
+"""
 mesh = Mesh()
 fid = HDF5File(commmpi, './benchi2_simplified.h5', 'r')
 fid.read(mesh, 'mesh', False)
 fid.close()
-
+"""
 for i in range(args.level):
     mesh = refine(mesh)
 
@@ -90,32 +92,35 @@ P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 P3 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 P4 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 #W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
-W = FunctionSpace(mesh, MixedElement([P2, P1, P3, P4]))
+W = FunctionSpace(mesh, MixedElement([P2, P1]))
+W_turb = FunctionSpace(mesh, MixedElement([P3, P4]))
 
 u0 = 1.0
 u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
-x_normal = Expression(("1.0","0.0","0.0"),degree=1)
-u_in_xnormal = Expression("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))",u0=u0,t=0.0,degree=2)
+#x_normal = Expression(("1.0","0.0","0.0"),degree=1)
+#u_in_xnormal = Expression("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))",u0=u0,t=0.0,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
 bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
-#bcu = [bc00, bc1]
+bcu = [bc00, bc1]
 
 # BC for turbulence models k and e
-bc_nsk = DirichletBC(W.sub(2), 0.0, boundary_markers, 0)
-bc_nse = DirichletBC(W.sub(3), 0.0, boundary_markers, 0)
+bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
+bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
 
 Cmu = 0.09
 turb_intensity = 0.05
 turb_lengthscale = 0.038*1.0
-k_in = 1.5*(u_in_xnormal*turb_intensity)**2
-e_in = Cmu*(k_in**1.5)/turb_lengthscale
-bc_ink = DirichletBC(W.sub(2).collapse(), k_in, boundary_markers, 1)
-bc_ine = DirichletBC(W.sub(3).collapse(), e_in, boundary_markers, 1)
+#k_in = 1.5*(u_in_xnormal*turb_intensity)**2
+#e_in = Cmu*(k_in**1.5)/turb_lengthscale
+k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2)",u0=u0,t=0.0,turb_intensity=turb_intensity,degree=2)
+e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
+bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
+bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
-# all BCs in a package
-bcu = [bc00, bc1, bc_nsk, bc_nse, bc_ink, bc_ine]
+# k-e BCs in a package
+bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
 
 # Artificial BC for PCD preconditioner
 if args.pcd_variant == "BRM1":
@@ -127,13 +132,24 @@ elif args.pcd_variant == "BRM2":
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
 info("Dimension of the function space: %g" % W.dim())
 # Arguments and coefficients of the form
-(u, p, k, e) = TrialFunctions(W)
-(v, q, vk, ve) = TestFunctions(W)
+(u, p) = TrialFunctions(W)
+(v, q) = TestFunctions(W)
 w = Function(W)
-w = interpolate(Expression(("1.0","0.0","0.0","0.0","k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W)
+#w = interpolate(Expression(("1.0","0.0","0.0","0.0","k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W)
 w0 = Function(W)
-(u_, p_, k_, e_) = split(w)
-(u0_, p0_, k0_, e0_) = split(w0)
+(u_, p_) = split(w)
+(u0_, p0_) = split(w0)
+
+(k, e) = TrialFunctions(W_turb)
+(vk, ve) = TestFunctions(W_turb)
+k_e = Function(W_turb)
+
+#k_e = interpolate(Expression(("k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W_turb)
+k_e = interpolate(Expression(("eps","eps"),eps=1e-9,degree=2),W_turb)
+
+k_e0 = Function(W_turb)
+(k_, e_) = split(k_e)
+(k0_, e0_) = split(k_e0)
 info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
 #nu = Constant(args.viscosity)
@@ -158,10 +174,15 @@ tau_pspg = h/2.0
 tau_lsic = h/2.0
 
 # Nonlinear equation
+small_r = 1e-7
 nu_t = Cmu*(k_**2)/e_
+#nu_t = (Cmu*(k_**2)/e_)/(1.0+small_r*(Cmu*(k_**2)/e_))
 sigma_e = 1.3
-C1 = 1.44
+Ceps = 0.07
+#C1 = 1.44
+C1 = 0.126
 C2 = 1.92
+#C1 = 0.126
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
@@ -171,13 +192,18 @@ F = (
     - (p_ + 2.0/3.0*k_)*div(v)
     + q*div(u_)
 )*dx
+#F_k = (idt*(k_ - k0_)*vk + div(k_*u_)*vk + nu_t*dot(grad(k_), grad(vk))\
+#       - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
+#F_e = (idt*(e_ - e0_)*ve + div(e_*u_)*ve + nu_t*dot(grad(e_), grad(ve))/sigma_e\
+#       - C1*nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T))*ve*e_/k_ + C2*(e_**2)*ve/k_)*dx
 F_k = (idt*(k_ - k0_)*vk + div(k_*u_)*vk + nu_t*dot(grad(k_), grad(vk))\
-       - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
-F_e = (idt*(e_ - e0_)*ve + div(e_*u_)*ve + nu_t*dot(grad(e_), grad(ve))/sigma_e\
-       - C1*nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T))*ve*e_/k_ + C2*(e_**2)*ve/k_)*dx
+        - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
+F_e = (idt*(e_ - e0_)*ve + div(e_*u_)*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
+        - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
+        #+ C2*((e_**2/k_)/(1.0+small_r*(e_**2/k_))*ve))*dx
+        + C2*(e_**2/k_)*ve)*dx
 F = F + F_stab
-F = F + F_k
-F = F + F_e
+F_ke = F_k + F_e
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -190,6 +216,7 @@ if args.nls == "picard":
 elif args.nls == "newton":
     J = derivative(F, w)
     J_pc = None #derivative(F+F_stab, w)
+    J_ke = derivative(F_ke, k_e)
 
 # Add stabilization for AMG 00-block
 #J_pc = None
@@ -219,12 +246,29 @@ pcd_assembler = PCDAssembler(J, F, bcu,
 assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
 problem = PCDNonlinearProblem(pcd_assembler)
 
+
+# define the k-e problem
+class k_e_equations(NonlinearProblem):
+    def __init__(self, a, L, bcs):
+        NonlinearProblem.__init__(self)
+        self.L = L
+        self.a = a
+        self.bcs = bcs
+    def F(self, b, x):
+        assemble(self.L, tensor=b, bcs=self.bcs)
+    def J(self, A, x):
+        assemble(self.a, tensor=A, bcs=self.bcs) #says bcs in F() and J() cannot be recong?
+
+#ke_problem = k_e_equations(J_ke, F_ke, bcs=bcke)
+ke_problem = NonlinearVariationalProblem(F_ke, k_e, bcke, J_ke)
+
+
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
 linear_solver = PCDKrylovSolver(comm=mesh.mpi_comm())
 linear_solver.parameters["relative_tolerance"] = 1e-4
 linear_solver.parameters["absolute_tolerance"] = 1e-8
-PETScOptions.set("ksp_monitor")
+#PETScOptions.set("ksp_monitor")
 
 # Set up subsolvers
 PETScOptions.set("fieldsplit_p_pc_python_type", "fenapack.PCDPC_" + args.pcd_variant)
@@ -234,9 +278,9 @@ if args.ls == "iterative":
     PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_rtol", 1e-4)
     PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_rtol", 1e-4)
     #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_rtol", 1e-4)
-    PETScOptions.set("fieldsplit_u_ksp_monitor")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
+    #PETScOptions.set("fieldsplit_u_ksp_monitor")
+    #PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
+    #PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
     PETScOptions.set("ksp_gmres_restart", 100)
 
     PETScOptions.set("fieldsplit_u_ksp_type", "gmres")
@@ -284,6 +328,54 @@ linear_solver.set_from_options()
 solver = PCDNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 3e-3
 
+
+# Set up k-e solver
+"""
+ke_linear_solver = PETScKrylovSolver()
+ke_linear_solver.parameters["relative_tolerance"] = 1e-4
+PETScOptions.clear()
+PETScOptions.set("ksp_type", "gmres")
+PETScOptions.set("ksp_monitor")
+PETScOptions.set("pc_type", "hypre")
+PETScOptions.set("pc_hypre_type", "boomeramg")
+PETScOptions.set("pc_hypre_boomeramg_coarsen_type", "hmis")
+PETScOptions.set("pc_hypre_boomeramg_interp_type", "ext+i")
+PETScOptions.set("pc_hypre_boomeramg_p_max", 4)
+PETScOptions.set("boomeramg_agg_nl", 1)
+ke_linear_solver.set_from_options()
+"""
+
+"""
+#ke_solver = NewtonSolver(ke_linear_solver)
+ke_solver = NewtonSolver()
+ke_solver.parameters["relative_tolerance"] = 1e-3
+ke_solver.parameters['linear_solver'] = 'gmres'
+ke_solver.parameters['preconditioner'] = 'ilu'
+#ke_solver.parameters['krylov_solver']['absolute_tolerance'] = 1E-9
+ke_solver.parameters['krylov_solver']['relative_tolerance'] = 1E-4
+ke_solver.parameters['krylov_solver']['maximum_iterations'] = 1000
+#ke_solver.parameters['restart'] = 40
+#ke_solver.parameters['krylov_solver']['preconditioner']['ilu']['fill_level'] = 0
+"""
+PETScOptions.clear()
+#PETScOptions.set("ksp_monitor")
+ke_solver  = NonlinearVariationalSolver(ke_problem)
+prm = ke_solver.parameters
+prm['newton_solver']['absolute_tolerance'] = 1E-5
+prm['newton_solver']['relative_tolerance'] = 1E-3
+prm['newton_solver']['maximum_iterations'] = 25
+prm['newton_solver']['relaxation_parameter'] = 1.0
+
+prm['newton_solver']['linear_solver'] = 'gmres'
+prm['newton_solver']['preconditioner'] = 'ilu'
+prm['newton_solver']['krylov_solver']['absolute_tolerance'] = 1E-6
+prm['newton_solver']['krylov_solver']['relative_tolerance'] = 1E-4
+prm['newton_solver']['krylov_solver']['maximum_iterations'] = 1000
+#prm['newton_solver']['linear_solver']['restart'] = 40
+#prm['newton_solver']['krylov_solver']['preconditioner']['ilu']['fill_level'] = 0
+#set_log_level(PROGRESS)
+
+
 # files
 #if rank == 0:
 ufile = File("results/velocity.pvd")
@@ -313,7 +405,13 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     info("Viscosity: %g" % nu.nu)
     # Update boundary conditions
     u_in.t = t
-    u_in_xnormal.t = t
+    #u_in_xnormal.t = t
+    k_in.t = t
+    e_in.t = t
+    norm_k = norm(k_e.sub(0),'l2')
+    norm_e = norm(k_e.sub(1),'l2')
+    info("Eddy momt is: %g" %(norm_k))
+    info("Eddy ener is: %g" %(norm_e))
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
@@ -321,6 +419,25 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         newton_iters, converged = solver.solve(problem, w.vector())
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
+    
+    if time_iters % args.ts_per_ke==0:
+        J_ke = derivative(F_ke, k_e)
+        ke_problem = NonlinearVariationalProblem(F_ke, k_e, bcke, J_ke)
+        PETScOptions.clear()
+        #PETScOptions.set("ksp_monitor")
+        ke_solver  = NonlinearVariationalSolver(ke_problem)
+        prm = ke_solver.parameters
+        prm['newton_solver']['absolute_tolerance'] = 1E-5
+        prm['newton_solver']['relative_tolerance'] = 1E-3
+        prm['newton_solver']['maximum_iterations'] = 25
+        prm['newton_solver']['relaxation_parameter'] = 1.0
+        prm['newton_solver']['linear_solver'] = 'gmres'
+        prm['newton_solver']['preconditioner'] = 'ilu'
+        prm['newton_solver']['krylov_solver']['absolute_tolerance'] = 1E-6
+        prm['newton_solver']['krylov_solver']['relative_tolerance'] = 1E-4
+        prm['newton_solver']['krylov_solver']['maximum_iterations'] = 1000
+        ke_solver.solve()
+        k_e0.assign(k_e)
 
     if time_iters % args.ts_per_out==0:
         u_out, p_out = w.split()
@@ -329,6 +446,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
 
     # Update variables at previous time level
     w0.assign(w)
+    #k_e0.assign(k_e)
 
 
 # Report timings
