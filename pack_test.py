@@ -48,7 +48,7 @@ rank = commmpi.Get_rank()
 root = 0
 """
 mesh = Mesh()
-fid = HDF5File(commmpi, './benchi2_simplified.h5', 'r')
+fid = HDF5File(commmpi, '/home/rzhang294/3D_Turb/bench1_mesh.h5', 'r')
 fid.read(mesh, 'mesh', False)
 fid.close()
 """
@@ -134,7 +134,7 @@ vnorm = norm(w.sub(0),"l2")
 # SUPG & PSPG stabilization parameters
 h_vgn = mesh.hmin()
 h_rgn = mesh.hmin()
-tau_sugn1 = h_vgn/(2.0)#*vnorm)
+tau_sugn1 = h_vgn/(2.0)
 tau_sugn2 = idt/2.0
 tau_sugn3 = h_rgn**2/(4.0*args.viscosity)
 tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
@@ -201,8 +201,9 @@ problem = PCDNonlinearProblem(pcd_assembler)
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
 linear_solver = PCDKrylovSolver(comm=mesh.mpi_comm())
-linear_solver.parameters["relative_tolerance"] = 4e-4
-linear_solver.parameters["absolute_tolerance"] = 1e-8
+linear_solver.parameters["relative_tolerance"] = 1e-4
+linear_solver.parameters["absolute_tolerance"] = 1e-6
+linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 
 # Set up subsolvers
@@ -216,7 +217,8 @@ if args.ls == "iterative":
     #PETScOptions.set("fieldsplit_u_ksp_monitor")
     #PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
     #PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
-    PETScOptions.set("ksp_gmres_restart", 100)
+    PETScOptions.set("ksp_gmres_restart", 30)
+    PETScOptions.set("ksp_max_it", 100)
 
     PETScOptions.set("fieldsplit_u_ksp_type", "gmres")
     PETScOptions.set("fieldsplit_u_pc_type", "hypre")
@@ -262,11 +264,16 @@ linear_solver.set_from_options()
 # Set up nonlinear solver
 solver = PCDNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 1e-3
-
+solver.parameters["error_on_nonconvergence"] = False
+solver.parameters["maximum_iterations"] = 4
+if rank == 0:
+    set_log_level(20) #INFO level, no warnings
+else:
+    set_log_level(50)
 # files
 #if rank == 0:
-ufile = File("results/velocity.pvd")
-pfile = File("results/pressure.pvd")
+ufile = File("VMS_coarse/velocity.pvd")
+pfile = File("VMS_coarse/pressure.pvd")
 
 # Solve problem
 t = 0.0
@@ -300,7 +307,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
     
-    if time_iters % args.ts_per_out==0:
+    if (time_iters % args.ts_per_out==0)or(time_iters == 1):
         u_out, p_out = w.split()
         ufile << u_out
         pfile << p_out
@@ -327,9 +334,9 @@ print(tab)
 #    f.write(tab)
 
 # Plot solution
-u, p = w.split()
-size = MPI.size(mesh.mpi_comm())
-rank = MPI.rank(mesh.mpi_comm())
+#u, p = w.split()
+#size = MPI.size(mesh.mpi_comm())
+#rank = MPI.rank(mesh.mpi_comm())
 """
 pyplot.figure()
 pyplot.subplot(2, 1, 1)
