@@ -200,57 +200,19 @@ problem = PCDNonlinearProblem(pcd_assembler)
 
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
-linear_solver = PCDKrylovSolver(comm=mesh.mpi_comm())
+linear_solver = KrylovSolver()
 linear_solver.parameters["relative_tolerance"] = 1e-4
 linear_solver.parameters["absolute_tolerance"] = 1e-6
 linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 
 # Set up subsolvers
-PETScOptions.set("fieldsplit_p_pc_python_type", "fenapack.PCDPC_" + args.pcd_variant)
 if args.ls == "iterative":
     PETScOptions.set("ksp_type", "fgmres")
-    PETScOptions.set("fieldsplit_u_ksp_rtol", 1e-4)
-    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_rtol", 1e-4)
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_rtol", 1e-4)
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_rtol", 1e-4)
-
-    #PETScOptions.set("fieldsplit_u_ksp_monitor")
-    #PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
-    #PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
     PETScOptions.set("ksp_gmres_restart", 30)
     PETScOptions.set("ksp_max_it", 100)
 
-    PETScOptions.set("fieldsplit_u_ksp_type", "gmres")
-    PETScOptions.set("fieldsplit_u_pc_type", "hypre")
-    PETScOptions.set("fieldsplit_u_pc_hypre_type", "boomeramg")
-    PETScOptions.set("fieldsplit_u_pc_hypre_boomeramg_coarsen_type", "hmis")
-    PETScOptions.set("fieldsplit_u_pc_hypre_boomeramg_interp_type", "ext+i")
-    PETScOptions.set("fieldsplit_u_pc_hypre_boomeramg_p_max", 4)
-    PETScOptions.set("fieldsplit_u_hypre_boomeramg_agg_nl", 1)
 
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_type", "cg")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_type", "jacobi")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_type", "boomeramg")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_coarsen_type", "hmis")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_interp_type", "ext+i")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_p_max", 4)
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_agg_nl", 1)
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_type", "richardson")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_max_it", 1)
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_type", "hypre")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_type", "boomeramg")
-
-    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_type", "cg")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_type", "hypre")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_type", "boomeramg")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_boomeramg_coarsen_type", "hmis")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_boomeramg_interp_type", "ext+i")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_boomeramg_p_max", 4)
-    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_boomeramg_agg_nl", 1)
-
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_type", "cg")
-    PETScOptions.set("fieldsplit_p_PCD_Mp_pc_type", "jacobi")
 elif args.ls == "direct" and args.mumps_debug:
     # Debugging MUMPS
     PETScOptions.set("fieldsplit_u_mat_mumps_icntl_4", 2)
