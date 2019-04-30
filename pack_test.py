@@ -1,23 +1,6 @@
 """Transient flow over a backward-facing step. Incompressible Navier-Stokes
 equations are solved using Newton/Picard iterative method. Linear solver is
-based on field split PCDR preconditioning."""
-
-# Copyright (C) 2015-2018 Martin Rehor, Jan Blechta
-#
-# This file is part of FENaPack.
-#
-# FENaPack is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Lesser General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# FENaPack is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Lesser General Public License for more details.
-#
-# You should have received a copy of the GNU Lesser General Public License
-# along with FENaPack.  If not, see <http://www.gnu.org/licenses/>.
+based on field split PCD preconditioning."""
 
 # Begin demo
 from dolfin import *
@@ -31,6 +14,7 @@ from fenapack import StabilizationParameterSD
 
 from mpi4py import MPI as pmp
 import argparse, sys, os, gc
+import time
 
 commmpi = pmp.COMM_WORLD
 # Parse input arguments
@@ -59,43 +43,60 @@ args = parser.parse_args(sys.argv[1:])
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 # Load mesh from file and refine uniformly
-#mesh = Mesh("mesh_lshape.xml")
+mesh = Mesh("./bluff_body_32_8_8.xml")
+rank = commmpi.Get_rank()
+root = 0
+"""
 mesh = Mesh()
-fid = HDF5File(commmpi, 'mesh.h5', 'r')
+fid = HDF5File(commmpi, '/home/rzhang294/3D_Turb/bench1_mesh.h5', 'r')
 fid.read(mesh, 'mesh', False)
 fid.close()
+"""
 for i in range(args.level):
     mesh = refine(mesh)
 
-# Define and mark boundaries
+##################################
+#### Boundary & design domain ####
+##################################
+eps = 1e-6
+# No-slip bc
 class Gamma0(SubDomain):
     def inside(self, x, on_boundary):
         return on_boundary
+
+# Inlet bc
 class Gamma1(SubDomain):
     def inside(self, x, on_boundary):
-        return on_boundary and near(x[0], -1.0)
+        return on_boundary and x[0]<eps
+
+# Oultet bc
 class Gamma2(SubDomain):
     def inside(self, x, on_boundary):
-        return on_boundary and near(x[0], 5.0)
+        return on_boundary and (x[0]>4.0-eps)# or x[0]<-1.0+eps)
+
+
+
 boundary_markers = MeshFunction("size_t", mesh, mesh.topology().dim()-1)
-boundary_markers.set_all(3)        # interior facets
+boundary_markers.set_all(4)        # interior facets
 Gamma0().mark(boundary_markers, 0) # no-slip facets
 Gamma1().mark(boundary_markers, 1) # inlet facets
-Gamma2().mark(boundary_markers, 2) # outlet facets
+Gamma2().mark(boundary_markers, 2) # outlet facet
+ds = Measure("ds", domain=mesh, subdomain_data=boundary_markers)
+
 
 # Build Taylor-Hood function space
 P2 = VectorElement("Lagrange", mesh.ufl_cell(), 1)
 P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
-W = FunctionSpace(mesh, P2*P1)
+#W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
+W = FunctionSpace(mesh, MixedElement([P2, P1]))
 
-# No-slip BC
-bc0 = DirichletBC(W.sub(0), (0.0, 0.0), boundary_markers, 0)
+u0 = 1.0
+u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
+# Navier-stokes bc
+bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
-# Parabolic inflow BC
-inlet_velocity = 1.0
-inflow = Expression(("4.0*inlet*(1.0 - exp(-5.0*t))*x[1]*(1.0 - x[1])", "0.0"),
-                     inlet=inlet_velocity, t=1.0e6, degree=2)
-bc1 = DirichletBC(W.sub(0), inflow, boundary_markers, 1)
+bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
+bcu = [bc00, bc1]
 
 # Artificial BC for PCD preconditioner
 if args.pcd_variant == "BRM1":
@@ -104,50 +105,56 @@ elif args.pcd_variant == "BRM2":
     bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 2)
 
 # Provide some info about the current problem
-info("Reynolds number: Re = %g" % (2.0*inlet_velocity/args.viscosity))
+info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
 info("Dimension of the function space: %g" % W.dim())
 # Arguments and coefficients of the form
-u, p = TrialFunctions(W)
-v, q = TestFunctions(W)
+(u, p) = TrialFunctions(W)
+(v, q) = TestFunctions(W)
 w = Function(W)
+w = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
 w0 = Function(W)
-u_, p_ = split(w)
-u0_, p0_ = split(w0)
+(u_, p_) = split(w)
+(u0_, p0_) = split(w0)
+
+info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
 #nu = Constant(args.viscosity)
 final_nu = args.viscosity
 #nu = final_nu
-nu = Expression("nu_t",nu_t=final_nu,degree=2,domain=mesh)
+nu = Expression("nu",nu=1000*final_nu,degree=2,domain=mesh)
 idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
-ramp_time = 6.0/(inlet_velocity*0.5)
+#ramp_time = 6.0/(u0*0.5)
 
-info("Courant number: Co = %g" % (inlet_velocity*args.dt/h))
+info("Courant number: Co = %g ~ %g" % (u0*args.dt/mesh.hmax(), u0*args.dt/mesh.hmin()))
 #w.interpolate(Constant((0.01,0.01,0.0)))
 #vnorm = sqrt(dot(u0_,u0_))
 #vnorm = u0_.vector().norm("l2")
 vnorm = norm(w.sub(0),"l2")
 # SUPG & PSPG stabilization parameters
-#tau_supg = h/(2.0*vnorm)
-#tau_pspg = h/(2.0*vnorm)
-#tau_lsic = vnorm*h/2.0
-tau_supg = h/2.0
-tau_pspg = h/2.0
-tau_lsic = h/2.0
+h_vgn = mesh.hmin()
+h_rgn = mesh.hmin()
+tau_sugn1 = h_vgn/(2.0)
+tau_sugn2 = idt/2.0
+tau_sugn3 = h_rgn**2/(4.0*args.viscosity)
+tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
+tau_pspg = tau_supg
+tau_lsic = tau_supg#*vnorm**2
 
 # Nonlinear equation
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
+u_prime = -tau_supg*MomEqn
+p_prime = -tau_lsic*div(u_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
       idt*inner(u_ - u0_, v)
     + nu*inner(grad(u_), grad(v))
     + inner(dot(grad(u_), u_), v)
-    - p_*div(v)
+    - (p_)*div(v)
     + q*div(u_)
-    #+ (tau_supg*inner(grad(v)*u_,MomEqn))
-    #+ (tau_pspg*inner(grad(q),MomEqn))
 )*dx
-F = F + F_stab
+F_VMS = (dot(v, dot(u_prime, grad(u_))) - dot(dot(u_prime, grad(v)), u_prime))*dx
+F = F + F_stab + F_VMS
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -173,8 +180,8 @@ elif args.ls == "direct":
 
 # PCD operators
 mu = idt*inner(u, v)*dx
-mp = 1.0/nu*p*q*dx
-kp = (1.0/nu)*( dot(grad(p), u_) + idt*p )*q*dx
+mp = 1.0/(nu)*p*q*dx
+kp = 1.0/(nu)*(dot(grad(p), u_) + idt*p)*q*dx
 ap = inner(grad(p), grad(q))*dx
 if args.pcd_variant == "BRM2":
     n = FacetNormal(mesh)
@@ -184,37 +191,36 @@ if args.pcd_variant == "BRM2":
     #kp -= Constant(1.0/nu)*dot(u_, n)*p*q*ds(0)  # TODO: Is this beneficial?
 
 # Collect forms to define nonlinear problem
-pcd_assembler = PCDAssembler(J, F, [bc0, bc1],
-                             #J_pc, ap=ap, kp=kp, mp=mp, mu=mu, bcs_pcd=bc_pcd)
-                            J_pc, ap=ap, kp=kp, mp=mp, bcs_pcd=bc_pcd)
+pcd_assembler = PCDAssembler(J, F, bcu,
+                             J_pc, ap=ap, kp=kp, mp=mp, bcs_pcd=bc_pcd)
 assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
 problem = PCDNonlinearProblem(pcd_assembler)
+
+
 
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
 linear_solver = PCDKrylovSolver(comm=mesh.mpi_comm())
 linear_solver.parameters["relative_tolerance"] = 1e-4
-linear_solver.parameters["absolute_tolerance"] = 1e-8
-#PETScOptions.set("ksp_monitor")
+linear_solver.parameters["absolute_tolerance"] = 1e-6
+linear_solver.parameters['error_on_nonconvergence'] = False
+PETScOptions.set("ksp_monitor")
 
 # Set up subsolvers
-#PETScOptions.set("fieldsplit_p_pc_python_type", "fenapack.PCDRPC_" + args.pcd_variant)
 PETScOptions.set("fieldsplit_p_pc_python_type", "fenapack.PCDPC_" + args.pcd_variant)
 if args.ls == "iterative":
-
     PETScOptions.set("ksp_type", "fgmres")
-    #PETScOptions.set("fieldsplit_u_ksp_monitor")
-    #PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_monitor")
-    #PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
     PETScOptions.set("fieldsplit_u_ksp_rtol", 1e-4)
     PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_rtol", 1e-4)
     PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_rtol", 1e-4)
     #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_rtol", 1e-4)
 
-    PETScOptions.set("ksp_gmres_restart", 100)
+    #PETScOptions.set("fieldsplit_u_ksp_monitor")
+    #PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_monitor")
+    #PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_monitor")
+    PETScOptions.set("ksp_gmres_restart", 30)
+    PETScOptions.set("ksp_max_it", 100)
 
-    
     PETScOptions.set("fieldsplit_u_ksp_type", "gmres")
     PETScOptions.set("fieldsplit_u_pc_type", "hypre")
     PETScOptions.set("fieldsplit_u_pc_hypre_type", "boomeramg")
@@ -222,9 +228,9 @@ if args.ls == "iterative":
     PETScOptions.set("fieldsplit_u_pc_hypre_boomeramg_interp_type", "ext+i")
     PETScOptions.set("fieldsplit_u_pc_hypre_boomeramg_p_max", 4)
     PETScOptions.set("fieldsplit_u_hypre_boomeramg_agg_nl", 1)
-    
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_type", "gmres")
-    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_type", "hypre")
+
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_type", "cg")
+    #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_type", "jacobi")
     #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_type", "boomeramg")
     #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_coarsen_type", "hmis")
     #PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_boomeramg_interp_type", "ext+i")
@@ -245,27 +251,6 @@ if args.ls == "iterative":
 
     PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_type", "cg")
     PETScOptions.set("fieldsplit_p_PCD_Mp_pc_type", "jacobi")
-
-    """
-    PETScOptions.set("fieldsplit_u_ksp_type", "richardson")
-    PETScOptions.set("fieldsplit_u_ksp_max_it", 1)
-    PETScOptions.set("fieldsplit_u_pc_type", "hypre")
-    PETScOptions.set("fieldsplit_u_pc_hypre_type", "boomeramg")
-    
-    PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_type", "richardson")
-    PETScOptions.set("fieldsplit_p_PCD_Rp_ksp_max_it", 1)
-    PETScOptions.set("fieldsplit_p_PCD_Rp_pc_type", "hypre")
-    PETScOptions.set("fieldsplit_p_PCD_Rp_pc_hypre_type", "boomeramg")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_type", "richardson")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_ksp_max_it", 2)
-    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_type", "hypre")
-    PETScOptions.set("fieldsplit_p_PCD_Ap_pc_hypre_type", "boomeramg")
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_type", "chebyshev")
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_max_it", 5)
-    PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_chebyshev_eigenvalues", "0.5, 2.0")
-    #PETScOptions.set("fieldsplit_p_PCD_Mp_ksp_chebyshev_esteig", "1,0,0,1")  # FIXME: What does it do?
-    PETScOptions.set("fieldsplit_p_PCD_Mp_pc_type", "jacobi")
-    """
 elif args.ls == "direct" and args.mumps_debug:
     # Debugging MUMPS
     PETScOptions.set("fieldsplit_u_mat_mumps_icntl_4", 2)
@@ -277,11 +262,17 @@ linear_solver.set_from_options()
 
 # Set up nonlinear solver
 solver = PCDNewtonSolver(linear_solver)
-solver.parameters["relative_tolerance"] = 3e-3
-
+solver.parameters["relative_tolerance"] = 1e-3
+solver.parameters["error_on_nonconvergence"] = False
+solver.parameters["maximum_iterations"] = 4
+if rank == 0:
+    set_log_level(20) #INFO level, no warnings
+else:
+    set_log_level(50)
 # files
-ufile = File("results/velocity.pvd")
-pfile = File("results/pressure.pvd")
+#if rank == 0:
+ufile = File("VMS_coarse/velocity.pvd")
+pfile = File("VMS_coarse/pressure.pvd")
 
 # Solve problem
 t = 0.0
@@ -298,15 +289,15 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     """
     if t < ramp_time:
         if ramp_time/2.0 - t > 0:
-            nu.nu_t = (np.exp(-t) - np.exp(-ramp_time/2.0))*999.0*args.viscosity + args.viscosity
+            nu.nu = (np.exp(-t) - np.exp(-ramp_time/2.0))*999.0*args.viscosity + args.viscosity
 
         else:
-            nu.nu_t = args.viscosity
+            nu.nu = args.viscosity
     """
-    nu.nu_t = final_nu
-    info("Viscosity: %g" % nu.nu_t)
+    nu.nu = final_nu
+    info("Viscosity: %g" % nu.nu)
     # Update boundary conditions
-    inflow.t = t
+    u_in.t = t
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
@@ -315,13 +306,14 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
 
-    if time_iters%args.ts_per_out==0:
+    if (time_iters % args.ts_per_out==0)or(time_iters == 1):
         u_out, p_out = w.split()
         ufile << u_out
         pfile << p_out
 
     # Update variables at previous time level
     w0.assign(w)
+    #k_e0.assign(k_e)
 
 
 # Report timings
@@ -341,9 +333,9 @@ print(tab)
 #    f.write(tab)
 
 # Plot solution
-u, p = w.split()
-size = MPI.size(mesh.mpi_comm())
-rank = MPI.rank(mesh.mpi_comm())
+#u, p = w.split()
+#size = MPI.size(mesh.mpi_comm())
+#rank = MPI.rank(mesh.mpi_comm())
 """
 pyplot.figure()
 pyplot.subplot(2, 1, 1)
