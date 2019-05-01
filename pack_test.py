@@ -166,7 +166,7 @@ if args.nls == "picard":
     )*dx
 elif args.nls == "newton":
     J = derivative(F, w)
-    J_pc = None #derivative(F+F_stab, w)
+    #J_pc = None #derivative(F+F_stab, w)
 
 # Add stabilization for AMG 00-block
 #J_pc = None
@@ -178,6 +178,7 @@ elif args.ls == "direct":
     J_pc = None
 """
 
+"""
 # PCD operators
 mu = idt*inner(u, v)*dx
 mp = 1.0/(nu)*p*q*dx
@@ -189,18 +190,42 @@ if args.pcd_variant == "BRM2":
     # TODO: What about the reaction term? Does it appear here?
     kp -= 1.0/nu*dot(u_, n)*p*q*ds(1)
     #kp -= Constant(1.0/nu)*dot(u_, n)*p*q*ds(0)  # TODO: Is this beneficial?
-
+"""
 # Collect forms to define nonlinear problem
-pcd_assembler = PCDAssembler(J, F, bcu,
-                             J_pc, ap=ap, kp=kp, mp=mp, bcs_pcd=bc_pcd)
-assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
-problem = PCDNonlinearProblem(pcd_assembler)
+#pcd_assembler = PCDAssembler(J, F, bcu,
+#                             J_pc, ap=ap, kp=kp, mp=mp, bcs_pcd=bc_pcd)
+#assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
+#problem = PCDNonlinearProblem(pcd_assembler)
+class rmtursAssembler(object):
+    def __init__(self, a, L, bcs):
+        self.assembler = SystemAssembler(J, F, bcs)
+        self._bcs = bcs
+    def rhs_vector(self, b, x=None):
+        if x is not None:
+            self.assembler.assemble(b, x)
+        else:
+            self.assembler.assemble(b)
+    def system_matrix(self, A):
+        self.assembler.assemble(A)
 
+class rmtursNonlinearProblem(NonlinearProblem):
+    def __init__(self, rmturs_assembler):
+        assert isinstance(rmturs_assembler, rmtursAssembler)
+        super(rmtursNonlinearProblem, self).__init__()
+        self.rmturs_assembler = rmturs_assembler
+    def F(self, b, x):
+        self.rmturs_assembler.rhs_vector(b, x)
+    def J(self, A, x):
+        self.rmturs_assembler.system_matrix(A)
+
+
+NS_assembler = rmtursAssembler(J, F, bcu)
+problem = rmtursNonlinearProblem(NS_assembler)
 
 
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
-linear_solver = KrylovSolver()
+linear_solver = PETScKrylovSolver()
 linear_solver.parameters["relative_tolerance"] = 1e-4
 linear_solver.parameters["absolute_tolerance"] = 1e-6
 linear_solver.parameters['error_on_nonconvergence'] = False
@@ -211,22 +236,29 @@ if args.ls == "iterative":
     PETScOptions.set("ksp_type", "fgmres")
     PETScOptions.set("ksp_gmres_restart", 30)
     PETScOptions.set("ksp_max_it", 100)
+    PETScOptions.set("preconditioner", "jacobi")
 
-
-elif args.ls == "direct" and args.mumps_debug:
-    # Debugging MUMPS
-    PETScOptions.set("fieldsplit_u_mat_mumps_icntl_4", 2)
-    PETScOptions.set("fieldsplit_p_PCD_Ap_mat_mumps_icntl_4", 2)
-    PETScOptions.set("fieldsplit_p_PCD_Mp_mat_mumps_icntl_4", 2)
 
 # Apply options
 linear_solver.set_from_options()
 
 # Set up nonlinear solver
-solver = PCDNewtonSolver(linear_solver)
+class NSNewtonSolver(NewtonSolver):
+    def __init__(self, solver):
+        comm = solver.ksp().comm.tompi4py()
+        factory = PETScFactory.instance()
+        super(NSNewtonSolver, self).__init__(comm, solver, factory)
+        self._solver = solver
+    def solve(self, problem, x):
+        self._problem = problem
+        r = super(NSNewtonSolver, self).solve(problem, x)
+        del self._problem
+        return r
+
+solver = NSNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 1e-3
 solver.parameters["error_on_nonconvergence"] = False
-solver.parameters["maximum_iterations"] = 4
+solver.parameters["maximum_iterations"] = 3
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
 else:
