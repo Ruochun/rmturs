@@ -20,12 +20,12 @@ commmpi = pmp.COMM_WORLD
 # Parse input arguments
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=
                                  argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument("-l", type=int, dest="level", default=4,
+parser.add_argument("-l", type=int, dest="level", default=0,
                     help="level of mesh refinement")
 parser.add_argument("--nu", type=float, dest="viscosity", default=0.02,
                     help="kinematic viscosity")
-parser.add_argument("--pcd", type=str, dest="pcd_variant", default="BRM1",
-                    choices=["BRM1", "BRM2"], help="PCD variant")
+#parser.add_argument("--pcd", type=str, dest="pcd_variant", default="BRM1",
+#                    choices=["BRM1", "BRM2"], help="PCD variant")
 parser.add_argument("--nls", type=str, dest="nls", default="newton",
                     choices=["picard", "newton"], help="nonlinear solver")
 parser.add_argument("--ls", type=str, dest="ls", default="iterative",
@@ -38,20 +38,28 @@ parser.add_argument("--t_end", type=float, dest="t_end", default=30.0,
                     help="termination time")
 parser.add_argument("--ts_per_out", type=int, dest="ts_per_out", default=1,
                     help="number of ts per output file")
+parser.add_argument("--mesh_file", type=str, dest="mesh_file", default="./mesh.xml",
+                    help="path and file name of the mesh")
+parser.add_argument("--out_folder", type=str, dest="out_folder", default="./result",
+                    help="output folder name")
 args = parser.parse_args(sys.argv[1:])
 
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
-# Load mesh from file and refine uniformly
-mesh = Mesh("./bluff_body_32_8_8.xml")
 rank = commmpi.Get_rank()
 root = 0
-"""
-mesh = Mesh()
-fid = HDF5File(commmpi, '/home/rzhang294/3D_Turb/bench1_mesh.h5', 'r')
-fid.read(mesh, 'mesh', False)
-fid.close()
-"""
+# Load mesh from file and refine uniformly
+try:
+    mesh = Mesh(args.mesh_file)
+except:
+    try:
+        mesh = Mesh()
+        fid = HDF5File(commmpi, args.mesh_file, 'r')
+        fid.read(mesh, 'mesh', False)
+        fid.close()
+    except:
+        info("No valid mesh to read in.")
+
 for i in range(args.level):
     mesh = refine(mesh)
 
@@ -97,12 +105,13 @@ bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
 bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
 bcu = [bc00, bc1]
-
+"""
 # Artificial BC for PCD preconditioner
 if args.pcd_variant == "BRM1":
     bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 1)
 elif args.pcd_variant == "BRM2":
     bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 2)
+"""
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -265,8 +274,8 @@ else:
     set_log_level(50)
 # files
 #if rank == 0:
-ufile = File("VMS_coarse/velocity.pvd")
-pfile = File("VMS_coarse/pressure.pvd")
+ufile = File(args.out_folder+"/velocity.pvd")
+pfile = File(args.out_folder+"/pressure.pvd")
 
 # Solve problem
 t = 0.0
