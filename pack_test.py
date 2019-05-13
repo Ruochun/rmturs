@@ -184,8 +184,7 @@ F = (
     - (p_)*div(v)
     + q*div(u_)
 )*dx
-F_VMS = (dot(v, dot(u_prime, grad(u_))) - dot(dot(u_prime, grad(v)), u_prime))*dx
-F = F + F_stab + F_VMS
+F = F + F_stab
 # Jacobian
 if args.nls == "picard":
     J = (
