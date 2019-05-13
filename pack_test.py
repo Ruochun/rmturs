@@ -66,6 +66,18 @@ class rmtursNonlinearProblem(NonlinearProblem):
     def J(self, A, x):
         self.rmturs_assembler.system_matrix(A)
 
+class rmtursNewtonSolver(NewtonSolver):
+    def __init__(self, solver):
+        comm = solver.ksp().comm.tompi4py()
+        factory = PETScFactory.instance()
+        super(rmtursNewtonSolver, self).__init__(comm, solver, factory)
+        self._solver = solver
+    def solve(self, problem, x):
+        self._problem = problem
+        r = super(rmtursNewtonSolver, self).solve(problem, x)
+        del self._problem
+        return r
+
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 rank = commmpi.Get_rank()
@@ -117,8 +129,11 @@ ds = Measure("ds", domain=mesh, subdomain_data=boundary_markers)
 # Build Taylor-Hood function space
 P2 = VectorElement("Lagrange", mesh.ufl_cell(), 1)
 P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
+P3 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
+P4 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 #W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
+W_turb = FunctionSpace(mesh, MixedElement([P3, P4]))
 
 u0 = 1.0
 u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
@@ -127,13 +142,23 @@ bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
 bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
 bcu = [bc00, bc1]
-"""
-# Artificial BC for PCD preconditioner
-if args.pcd_variant == "BRM1":
-    bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 1)
-elif args.pcd_variant == "BRM2":
-    bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 2)
-"""
+
+# BC for turbulence models k and e
+bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
+bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
+
+Cmu = 0.09
+turb_intensity = 0.05
+turb_lengthscale = 0.038*1.0
+#k_in = 1.5*(u_in_xnormal*turb_intensity)**2
+#e_in = Cmu*(k_in**1.5)/turb_lengthscale
+k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2)",u0=u0,t=0.0,turb_intensity=turb_intensity,degree=2)
+e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
+bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
+bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
+
+# k-e BCs in a package
+bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -146,6 +171,15 @@ w = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
 w0 = Function(W)
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
+
+(k, e) = TrialFunctions(W_turb)
+(vk, ve) = TestFunctions(W_turb)
+k_e = Function(W_turb)
+#k_e = interpolate(Expression(("k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W_turb)
+k_e = interpolate(Expression(("eps","eps"),eps=1e-9,degree=2),W_turb)
+k_e0 = Function(W_turb)
+(k_, e_) = split(k_e)
+(k0_, e0_) = split(k_e0)
 
 info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
@@ -173,9 +207,15 @@ tau_pspg = tau_supg
 tau_lsic = tau_supg#*vnorm**2
 
 # Nonlinear equation
+small_r = 1e-7
+nu_t = Cmu*(k_**2)/e_
+#nu_t = (Cmu*(k_**2)/e_)/(1.0+small_r*(Cmu*(k_**2)/e_))
+sigma_e = 1.3
+Ceps = 0.07
+#C1 = 1.44
+C1 = 0.126
+C2 = 1.92
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
-u_prime = -tau_supg*MomEqn
-p_prime = -tau_lsic*div(u_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
       idt*inner(u_ - u0_, v)
@@ -184,7 +224,14 @@ F = (
     - (p_)*div(v)
     + q*div(u_)
 )*dx
+F_k = (idt*(k_ - k0_)*vk + div(k_*u_)*vk + nu_t*dot(grad(k_), grad(vk))\
+        - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
+F_e = (idt*(e_ - e0_)*ve + div(e_*u_)*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
+        - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
+        #+ C2*((e_**2/k_)/(1.0+small_r*(e_**2/k_))*ve))*dx
+        + C2*(e_**2/k_)*ve)*dx
 F = F + F_stab
+F_ke = F_k + F_e
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -196,6 +243,7 @@ if args.nls == "picard":
     )*dx
 elif args.nls == "newton":
     J = derivative(F, w)
+    J_ke = derivative(F_ke, k_e)
     #J_pc = None #derivative(F+F_stab, w)
 
 # Add stabilization for AMG 00-block
@@ -229,7 +277,9 @@ if args.pcd_variant == "BRM2":
 
 NS_assembler = rmtursAssembler(J, F, bcu)
 problem = rmtursNonlinearProblem(NS_assembler)
-
+ 
+ke_assembler = rmtursAssembler(J_ke, F_ke, bcke)
+ke_problem = rmtursNonlinearProblem(ke_assembler)
 
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
@@ -238,36 +288,41 @@ linear_solver.parameters["relative_tolerance"] = 1e-4
 linear_solver.parameters["absolute_tolerance"] = 1e-6
 linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
-
-# Set up subsolvers
 if args.ls == "iterative":
     PETScOptions.set("ksp_type", "fgmres")
     PETScOptions.set("ksp_gmres_restart", 30)
     PETScOptions.set("ksp_max_it", 100)
     PETScOptions.set("preconditioner", "jacobi")
-    PETScOptions.set("nonzero_initial_guess", True)
-
-
-# Apply options
+    #PETScOptions.set("nonzero_initial_guess", True)
 linear_solver.set_from_options()
 
-# Set up nonlinear solver
-class NSNewtonSolver(NewtonSolver):
-    def __init__(self, solver):
-        comm = solver.ksp().comm.tompi4py()
-        factory = PETScFactory.instance()
-        super(NSNewtonSolver, self).__init__(comm, solver, factory)
-        self._solver = solver
-    def solve(self, problem, x):
-        self._problem = problem
-        r = super(NSNewtonSolver, self).solve(problem, x)
-        del self._problem
-        return r
+PETScOptions.clear()
+ke_linear_solver = PETScKrylovSolver()
+ke_linear_solver.parameters["relative_tolerance"] = 1e-4
+ke_linear_solver.parameters["absolute_tolerance"] = 1e-6
+ke_linear_solver.parameters['error_on_nonconvergence'] = False
+PETScOptions.set("ksp_monitor")
+if args.ls == "iterative":
+    PETScOptions.set("ksp_type", "fgmres")
+    PETScOptions.set("ksp_gmres_restart", 30)
+    PETScOptions.set("ksp_max_it", 100)
+    PETScOptions.set("preconditioner", "jacobi")
+    #PETScOptions.set("nonzero_initial_guess", True)
+ke_linear_solver.set_from_options()
 
-solver = NSNewtonSolver(linear_solver)
+
+# Set up nonlinear solver
+solver = rmtursNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 1e-3
 solver.parameters["error_on_nonconvergence"] = False
 solver.parameters["maximum_iterations"] = 3
+
+# Set up k-e solver
+ke_solver = rmtursNewtonSolver(ke_linear_solver)
+solver.parameters["relative_tolerance"] = 1e-3
+solver.parameters["error_on_nonconvergence"] = False
+solver.parameters["maximum_iterations"] = 3
+
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
 else:
@@ -301,11 +356,18 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     info("Viscosity: %g" % nu.nu)
     # Update boundary conditions
     u_in.t = t
+    k_in.t = t
+    e_in.t = t
+    norm_k = norm(k_e.sub(0),'l2')
+    norm_e = norm(k_e.sub(1),'l2')
+    info("Eddy momt is: %g" %(norm_k))
+    info("Eddy ener is: %g" %(norm_e))
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
     with Timer("Solve") as t_solve:
         newton_iters, converged = solver.solve(problem, w.vector())
+        ke_solver.solve(ke_problem, k_e.vector())
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
 
@@ -316,7 +378,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
 
     # Update variables at previous time level
     w0.assign(w)
-    #k_e0.assign(k_e)
+    k_e0.assign(k_e)
 
 
 # Report timings
