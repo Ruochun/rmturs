@@ -46,7 +46,7 @@ args = parser.parse_args(sys.argv[1:])
 
 class rmtursAssembler(object):
     def __init__(self, a, L, bcs):
-        self.assembler = SystemAssembler(J, F, bcs)
+        self.assembler = SystemAssembler(a, L, bcs)
         self._bcs = bcs
     def rhs_vector(self, b, x=None):
         if x is not None:
