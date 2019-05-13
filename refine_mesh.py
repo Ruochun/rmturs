@@ -17,7 +17,7 @@ class Area99(SubDomain):
 
 mesh = Mesh("bluff_body_32_8_8.xml")
 
-for i in range(2):
+for i in range(3):
     Coarse_marker = MeshFunction("bool", mesh, 1)#mesh.topology().dim()-1)
     Coarse_marker.set_all(False)
     Area99().mark(Coarse_marker, True)

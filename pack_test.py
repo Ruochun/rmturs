@@ -44,6 +44,28 @@ parser.add_argument("--out_folder", type=str, dest="out_folder", default="./resu
                     help="output folder name")
 args = parser.parse_args(sys.argv[1:])
 
+class rmtursAssembler(object):
+    def __init__(self, a, L, bcs):
+        self.assembler = SystemAssembler(J, F, bcs)
+        self._bcs = bcs
+    def rhs_vector(self, b, x=None):
+        if x is not None:
+            self.assembler.assemble(b, x)
+        else:
+            self.assembler.assemble(b)
+    def system_matrix(self, A):
+        self.assembler.assemble(A)
+
+class rmtursNonlinearProblem(NonlinearProblem):
+    def __init__(self, rmturs_assembler):
+        #assert isinstance(rmturs_assembler, rmtursAssembler)
+        super(rmtursNonlinearProblem, self).__init__()
+        self.rmturs_assembler = rmturs_assembler
+    def F(self, b, x):
+        self.rmturs_assembler.rhs_vector(b, x)
+    def J(self, A, x):
+        self.rmturs_assembler.system_matrix(A)
+
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 rank = commmpi.Get_rank()
@@ -205,28 +227,6 @@ if args.pcd_variant == "BRM2":
 #                             J_pc, ap=ap, kp=kp, mp=mp, bcs_pcd=bc_pcd)
 #assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
 #problem = PCDNonlinearProblem(pcd_assembler)
-class rmtursAssembler(object):
-    def __init__(self, a, L, bcs):
-        self.assembler = SystemAssembler(J, F, bcs)
-        self._bcs = bcs
-    def rhs_vector(self, b, x=None):
-        if x is not None:
-            self.assembler.assemble(b, x)
-        else:
-            self.assembler.assemble(b)
-    def system_matrix(self, A):
-        self.assembler.assemble(A)
-
-class rmtursNonlinearProblem(NonlinearProblem):
-    def __init__(self, rmturs_assembler):
-        assert isinstance(rmturs_assembler, rmtursAssembler)
-        super(rmtursNonlinearProblem, self).__init__()
-        self.rmturs_assembler = rmturs_assembler
-    def F(self, b, x):
-        self.rmturs_assembler.rhs_vector(b, x)
-    def J(self, A, x):
-        self.rmturs_assembler.system_matrix(A)
-
 
 NS_assembler = rmtursAssembler(J, F, bcu)
 problem = rmtursNonlinearProblem(NS_assembler)
@@ -246,6 +246,7 @@ if args.ls == "iterative":
     PETScOptions.set("ksp_gmres_restart", 30)
     PETScOptions.set("ksp_max_it", 100)
     PETScOptions.set("preconditioner", "jacobi")
+    PETScOptions.set("nonzero_initial_guess", True)
 
 
 # Apply options
