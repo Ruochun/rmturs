@@ -46,7 +46,7 @@ args = parser.parse_args(sys.argv[1:])
 
 class rmtursAssembler(object):
     def __init__(self, a, L, bcs):
-        self.assembler = SystemAssembler(J, F, bcs)
+        self.assembler = SystemAssembler(a, L, bcs)
         self._bcs = bcs
     def rhs_vector(self, b, x=None):
         if x is not None:
@@ -176,7 +176,7 @@ w0 = Function(W)
 (vk, ve) = TestFunctions(W_turb)
 k_e = Function(W_turb)
 #k_e = interpolate(Expression(("k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W_turb)
-k_e = interpolate(Expression(("eps","eps"),eps=1e-9,degree=2),W_turb)
+k_e = interpolate(Expression(("eps","eps"),eps=1e-9,degree=1),W_turb)
 k_e0 = Function(W_turb)
 (k_, e_) = split(k_e)
 (k0_, e0_) = split(k_e0)
@@ -303,10 +303,10 @@ ke_linear_solver.parameters["absolute_tolerance"] = 1e-6
 ke_linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
-    PETScOptions.set("ksp_type", "fgmres")
-    PETScOptions.set("ksp_gmres_restart", 30)
-    PETScOptions.set("ksp_max_it", 100)
-    PETScOptions.set("preconditioner", "jacobi")
+    PETScOptions.set("ksp_type", "gmres")
+    PETScOptions.set("ksp_gmres_restart", 100)
+    PETScOptions.set("ksp_max_it", 50)
+    PETScOptions.set("preconditioner", "diag")
     #PETScOptions.set("nonzero_initial_guess", True)
 ke_linear_solver.set_from_options()
 
@@ -319,9 +319,9 @@ solver.parameters["maximum_iterations"] = 3
 
 # Set up k-e solver
 ke_solver = rmtursNewtonSolver(ke_linear_solver)
-solver.parameters["relative_tolerance"] = 1e-3
-solver.parameters["error_on_nonconvergence"] = False
-solver.parameters["maximum_iterations"] = 3
+ke_solver.parameters["relative_tolerance"] = 1e-3
+ke_solver.parameters["error_on_nonconvergence"] = False
+ke_solver.parameters["maximum_iterations"] = 3
 
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
@@ -360,13 +360,15 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     e_in.t = t
     norm_k = norm(k_e.sub(0),'l2')
     norm_e = norm(k_e.sub(1),'l2')
-    info("Eddy momt is: %g" %(norm_k))
-    info("Eddy ener is: %g" %(norm_e))
+    info("Eddy momentum is: %g" %(norm_k))
+    info("Eddy energy is: %g" %(norm_e))
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
     with Timer("Solve") as t_solve:
+        info("Solving N-S problem:")
         newton_iters, converged = solver.solve(problem, w.vector())
+        info("Solving k-e problem:")
         ke_solver.solve(ke_problem, k_e.vector())
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
