@@ -66,6 +66,18 @@ class rmtursNonlinearProblem(NonlinearProblem):
     def J(self, A, x):
         self.rmturs_assembler.system_matrix(A)
 
+class rmtursNewtonSolver(NewtonSolver):
+    def __init__(self, solver):
+        comm = solver.ksp().comm.tompi4py()
+        factory = PETScFactory.instance()
+        super(rmtursNewtonSolver, self).__init__(comm, solver, factory)
+        self._solver = solver
+    def solve(self, problem, x):
+        self._problem = problem
+        r = super(rmtursNewtonSolver, self).solve(problem, x)
+        del self._problem
+        return r
+
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 rank = commmpi.Get_rank()
@@ -246,26 +258,14 @@ if args.ls == "iterative":
     PETScOptions.set("ksp_gmres_restart", 30)
     PETScOptions.set("ksp_max_it", 100)
     PETScOptions.set("preconditioner", "jacobi")
-    PETScOptions.set("nonzero_initial_guess", True)
+    #PETScOptions.set("nonzero_initial_guess", True)
 
 
 # Apply options
 linear_solver.set_from_options()
 
 # Set up nonlinear solver
-class NSNewtonSolver(NewtonSolver):
-    def __init__(self, solver):
-        comm = solver.ksp().comm.tompi4py()
-        factory = PETScFactory.instance()
-        super(NSNewtonSolver, self).__init__(comm, solver, factory)
-        self._solver = solver
-    def solve(self, problem, x):
-        self._problem = problem
-        r = super(NSNewtonSolver, self).solve(problem, x)
-        del self._problem
-        return r
-
-solver = NSNewtonSolver(linear_solver)
+solver = rmtursNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 1e-3
 solver.parameters["error_on_nonconvergence"] = False
 solver.parameters["maximum_iterations"] = 3
