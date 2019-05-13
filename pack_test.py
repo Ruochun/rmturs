@@ -144,8 +144,8 @@ bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
 bcu = [bc00, bc1]
 
 # BC for turbulence models k and e
-bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
-bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
+#bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
+#bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
 
 Cmu = 0.09
 turb_intensity = 0.05
@@ -158,7 +158,8 @@ bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
 bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
 # k-e BCs in a package
-bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
+#bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
+bcke = [bc_ine, bc_ink]
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -219,9 +220,9 @@ MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
       idt*inner(u_ - u0_, v)
-    + nu*inner(grad(u_), grad(v))
+    + (nu+nu_t)*inner(grad(u_), grad(v)) + inner(outer(grad(nu_t), v), grad(u_)) + dot(v, grad(u_)*grad(nu_t))
     + inner(dot(grad(u_), u_), v)
-    - (p_)*div(v)
+    - (p_ + 2.0/3.0*k_)*div(v)
     + q*div(u_)
 )*dx
 F_k = (idt*(k_ - k0_)*vk + div(k_*u_)*vk + nu_t*dot(grad(k_), grad(vk))\
