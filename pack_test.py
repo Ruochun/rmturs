@@ -166,6 +166,7 @@ info("Dimension of the function space: %g" % W.dim())
 w = Function(W)
 w = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
 w0 = Function(W)
+#w0 = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
 
@@ -175,6 +176,7 @@ k_e = Function(W_turb)
 #k_e = interpolate(Expression(("k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W_turb)
 k_e = interpolate(Expression(("eps","eps"),eps=1e-5,degree=1),W_turb)
 k_e0 = Function(W_turb)
+k_e0 = interpolate(Expression(("eps","eps"),eps=1e-5,degree=1),W_turb)
 (k_, e_) = split(k_e)
 (k0_, e0_) = split(k_e0)
 
@@ -208,6 +210,7 @@ tau_lsic = tau_supg#*vnorm**2
 small_r = 1e-7
 nu_t = Cmu*(k_**2)/e_
 #nu_t = (Cmu*(k_**2)/e_)/(1.0+small_r*(Cmu*(k_**2)/e_))
+#nu_t0 = Cmu*(k0_**2)/e0_
 sigma_e = 1.3
 Ceps = 0.07
 #C1 = 1.44
