@@ -164,7 +164,8 @@ info("Function space constructed")
 #nu = Constant(args.viscosity)
 #final_nu = args.viscosity
 #nu = final_nu
-nu = Expression("final_nu*(1.0 + exp(-1.0*(t-ramp_time)))",ramp_time=7.5,final_nu=args.viscosity,t=0.0,degree=2,domain=mesh)
+ramp_time = 14.0
+nu = Expression("final_nu*(1.0 + exp(-1.0*(t-ramp_time)))",ramp_time=ramp_time/2.0,final_nu=args.viscosity,t=0.0,degree=2,domain=mesh)
 idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
 #ramp_time = 6.0/(u0*0.5)
@@ -300,7 +301,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     """
     # Update viscosity
     nu.t = t
-    info("Viscosity: %g" %(args.viscosity*(1.0 + np.exp(-1.0*(t-7.5)))) )
+    info("Viscosity: %g" %(args.viscosity*(1.0 + np.exp(-1.0*(t-ramp_time/2.0)))) )
     # Update boundary conditions
     #u_in.t = t
 
