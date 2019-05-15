@@ -1,7 +1,3 @@
-"""Transient flow over a backward-facing step. Incompressible Navier-Stokes
-equations are solved using Newton/Picard iterative method. Linear solver is
-based on field split PCD preconditioning."""
-
 # Begin demo
 from dolfin import *
 #from matplotlib import pyplot
@@ -150,10 +146,10 @@ bcu = [bc00, bc1]
 Cmu = 0.09
 turb_intensity = 0.05
 turb_lengthscale = 0.038*1.0
-#k_in = 1.5*(u_in_xnormal*turb_intensity)**2
-#e_in = Cmu*(k_in**1.5)/turb_lengthscale
-k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2)",u0=u0,t=0.0,turb_intensity=turb_intensity,degree=2)
-e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
+k_in = 1.5*(u0*turb_intensity)**2
+e_in = Cmu*(k_in**1.5)/turb_lengthscale
+#k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2)",u0=u0,t=0.0,turb_intensity=turb_intensity,degree=2)
+#e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
 bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
 bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
@@ -177,7 +173,7 @@ w0 = Function(W)
 (vk, ve) = TestFunctions(W_turb)
 k_e = Function(W_turb)
 #k_e = interpolate(Expression(("k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W_turb)
-k_e = interpolate(Expression(("eps","eps"),eps=1e-9,degree=1),W_turb)
+k_e = interpolate(Expression(("eps","eps"),eps=1e-5,degree=1),W_turb)
 k_e0 = Function(W_turb)
 (k_, e_) = split(k_e)
 (k0_, e0_) = split(k_e0)
@@ -357,8 +353,8 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     info("Viscosity: %g" % nu.nu)
     # Update boundary conditions
     u_in.t = t
-    k_in.t = t
-    e_in.t = t
+    #k_in.t = t
+    #e_in.t = t
     norm_k = norm(k_e.sub(0),'l2')
     norm_e = norm(k_e.sub(1),'l2')
     info("Eddy momentum is: %g" %(norm_k))
