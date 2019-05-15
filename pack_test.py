@@ -133,7 +133,7 @@ P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
 
 u0 = 1.0
-u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
+u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0","0.0","0.0"),u0=u0,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
@@ -162,9 +162,9 @@ w0 = Function(W)
 info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
 #nu = Constant(args.viscosity)
-final_nu = args.viscosity
+#final_nu = args.viscosity
 #nu = final_nu
-nu = Expression("nu",nu=1000*final_nu,degree=2,domain=mesh)
+nu = Expression("final_nu*(1.0 + exp(-1.0*(t-ramp_time)))",ramp_time=7.5,final_nu=args.viscosity,t=0.0,degree=2,domain=mesh)
 idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
 #ramp_time = 6.0/(u0*0.5)
@@ -179,7 +179,7 @@ h_vgn = mesh.hmin()
 h_rgn = mesh.hmin()
 tau_sugn1 = h_vgn/(2.0)
 tau_sugn2 = idt/2.0
-tau_sugn3 = h_rgn**2/(4.0*args.viscosity)
+tau_sugn3 = h_rgn**2/(4.0*nu)
 tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
 tau_pspg = tau_supg
 tau_lsic = tau_supg#*vnorm**2
@@ -298,10 +298,11 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         else:
             nu.nu = args.viscosity
     """
-    nu.nu = final_nu
-    info("Viscosity: %g" % nu.nu)
+    # Update viscosity
+    nu.t = t
+    info("Viscosity: %g" %(args.viscosity*(1.0 + np.exp(-1.0*(t-7.5)))) )
     # Update boundary conditions
-    u_in.t = t
+    #u_in.t = t
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
