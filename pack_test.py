@@ -225,9 +225,9 @@ F = (
     - (p_ + 2.0/3.0*k_)*div(v)
     + q*div(u_)
 )*dx
-F_k = (idt*(k_ - k0_)*vk + div(k_*u_)*vk + nu_t*dot(grad(k_), grad(vk))\
+F_k = (idt*(k_ - k0_)*vk + dot(u_, grad(k_))*vk + nu_t*dot(grad(k_), grad(vk))\
         - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
-F_e = (idt*(e_ - e0_)*ve + div(e_*u_)*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
+F_e = (idt*(e_ - e0_)*ve + dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
         - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
         #+ C2*((e_**2/k_)/(1.0+small_r*(e_**2/k_))*ve))*dx
         + C2*(e_**2/k_)*ve)*dx
