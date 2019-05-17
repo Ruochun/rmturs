@@ -1,7 +1,3 @@
-"""Transient flow over a backward-facing step. Incompressible Navier-Stokes
-equations are solved using Newton/Picard iterative method. Linear solver is
-based on field split PCD preconditioning."""
-
 # Begin demo
 from dolfin import *
 #from matplotlib import pyplot
@@ -255,8 +251,8 @@ PETScOptions.set("ksp_monitor")
 # Set up subsolvers
 if args.ls == "iterative":
     PETScOptions.set("ksp_type", "fgmres")
-    PETScOptions.set("ksp_gmres_restart", 30)
-    PETScOptions.set("ksp_max_it", 100)
+    PETScOptions.set("ksp_gmres_restart", 10)
+    PETScOptions.set("ksp_max_it", 40)
     PETScOptions.set("preconditioner", "jacobi")
     #PETScOptions.set("nonzero_initial_guess", True)
 
