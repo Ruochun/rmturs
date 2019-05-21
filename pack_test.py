@@ -131,8 +131,9 @@ P4 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
 W_turb = FunctionSpace(mesh, MixedElement([P3, P4]))
 
+ramp_time = 14.0
 u0 = 1.0
-u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0","0.0","0.0"),u0=u0,degree=2)
+u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(t/ramp_time)","0.0","0.0"),u0=u0,t=0.0,ramp_time=ramp_time,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 
@@ -140,16 +141,16 @@ bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
 bcu = [bc00, bc1]
 
 # BC for turbulence models k and e
-#bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
-#bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
+bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
+bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
 
 Cmu = 0.09
 turb_intensity = 0.05
 turb_lengthscale = 0.038*1.0
-k_in = 1.5*(u0*turb_intensity)**2
-e_in = Cmu*(k_in**1.5)/turb_lengthscale
-#k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2)",u0=u0,t=0.0,turb_intensity=turb_intensity,degree=2)
-#e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
+#k_in = 1.5*(u0*turb_intensity)**2
+#e_in = Cmu*(k_in**1.5)/turb_lengthscale
+k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,degree=2)
+e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
 bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
 bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
@@ -185,8 +186,7 @@ info("Function space constructed")
 #nu = Constant(args.viscosity)
 #final_nu = args.viscosity
 #nu = final_nu
-ramp_time = 14.0
-nu = Expression("final_nu*(1.0 + exp(-1.0*(t-ramp_time)))",ramp_time=ramp_time/2.0,final_nu=args.viscosity,t=0.0,degree=2,domain=mesh)
+nu = Expression("final_nu*(1.0 + exp(-1.0*(t-ramp_time)))",ramp_time=ramp_time/2.0,final_nu=args.viscosity,t=99999.9,degree=2,domain=mesh)
 idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
 #ramp_time = 6.0/(u0*0.5)
@@ -208,9 +208,8 @@ tau_lsic = tau_supg#*vnorm**2
 
 # Nonlinear equation
 small_r = 1e-7
-nu_t = Cmu*(k_**2)/e_
-#nu_t = (Cmu*(k_**2)/e_)/(1.0+small_r*(Cmu*(k_**2)/e_))
-#nu_t0 = Cmu*(k0_**2)/e0_
+nu_t = Cmu*(k0_**2)/e0_
+#nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
 sigma_e = 1.3
 Ceps = 0.07
 #C1 = 1.44
@@ -221,16 +220,19 @@ F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + t
 F = (
       idt*inner(u_ - u0_, v)
     + (nu+nu_t)*inner(grad(u_), grad(v)) + inner(outer(grad(nu_t), v), grad(u_)) + dot(v, grad(u_)*grad(nu_t))
+    #+ nu*inner(grad(u_), grad(v))
     + inner(dot(grad(u_), u_), v)
     - (p_ + 2.0/3.0*k_)*div(v)
+    #- p_*div(v)
     + q*div(u_)
 )*dx
 F_k = (idt*(k_ - k0_)*vk + dot(u_, grad(k_))*vk + nu_t*dot(grad(k_), grad(vk))\
         - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
 F_e = (idt*(e_ - e0_)*ve + dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
         - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
-        #+ C2*((e_**2/k_)/(1.0+small_r*(e_**2/k_))*ve))*dx
-        + C2*(e_**2/k_)*ve)*dx
+        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
+        + C2*(e0_**2/k0_)*ve)*dx
+        #+ C2*(e_**2)*ve)*dx
 F = F + F_stab
 F_ke = F_k + F_e
 # Jacobian
@@ -245,7 +247,8 @@ if args.nls == "picard":
 elif args.nls == "newton":
     J = derivative(F, w)
     J_ke = derivative(F_ke, k_e)
-    #J_pc = None #derivative(F+F_stab, w)
+    #J_ke = lhs(F_ke)
+    #F_ke = rhs(F_ke)
 
 # Add stabilization for AMG 00-block
 #J_pc = None
@@ -286,28 +289,28 @@ ke_problem = rmtursNonlinearProblem(ke_assembler)
 PETScOptions.clear()
 linear_solver = PETScKrylovSolver()
 linear_solver.parameters["relative_tolerance"] = 1e-4
-linear_solver.parameters["absolute_tolerance"] = 1e-6
+linear_solver.parameters["absolute_tolerance"] = 1e-10
 linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
     PETScOptions.set("ksp_type", "fgmres")
-    PETScOptions.set("ksp_gmres_restart", 30)
-    PETScOptions.set("ksp_max_it", 100)
-    PETScOptions.set("preconditioner", "jacobi")
+    PETScOptions.set("ksp_gmres_restart", 10)
+    PETScOptions.set("ksp_max_it", 50)
+    PETScOptions.set("preconditioner", "default")
     #PETScOptions.set("nonzero_initial_guess", True)
 linear_solver.set_from_options()
 
 PETScOptions.clear()
 ke_linear_solver = PETScKrylovSolver()
-ke_linear_solver.parameters["relative_tolerance"] = 1e-4
-ke_linear_solver.parameters["absolute_tolerance"] = 1e-6
+ke_linear_solver.parameters["relative_tolerance"] = 1e-5
+ke_linear_solver.parameters["absolute_tolerance"] = 1e-10
 ke_linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
     PETScOptions.set("ksp_type", "gmres")
-    PETScOptions.set("ksp_gmres_restart", 100)
+    PETScOptions.set("ksp_gmres_restart", 10)
     PETScOptions.set("ksp_max_it", 50)
-    PETScOptions.set("preconditioner", "diag")
+    PETScOptions.set("preconditioner", "default")
     #PETScOptions.set("nonzero_initial_guess", True)
 ke_linear_solver.set_from_options()
 
@@ -320,9 +323,9 @@ solver.parameters["maximum_iterations"] = 3
 
 # Set up k-e solver
 ke_solver = rmtursNewtonSolver(ke_linear_solver)
-ke_solver.parameters["relative_tolerance"] = 1e-3
+ke_solver.parameters["relative_tolerance"] = 1e-4
 ke_solver.parameters["error_on_nonconvergence"] = False
-ke_solver.parameters["maximum_iterations"] = 3
+ke_solver.parameters["maximum_iterations"] = 1
 
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
@@ -332,6 +335,7 @@ else:
 #if rank == 0:
 ufile = File(args.out_folder+"/velocity.pvd")
 pfile = File(args.out_folder+"/pressure.pvd")
+kefile = File(args.out_folder+"/k_epsilon.pvd")
 
 # Solve problem
 t = 0.0
@@ -354,16 +358,23 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
             nu.nu = args.viscosity
     """
     # Update viscosity
-    nu.t = t
-    info("Viscosity: %g" %(args.viscosity*(1.0 + np.exp(-1.0*(t-ramp_time/2.0)))) )
+    #nu.t = t
+    #info("Viscosity: %g" %(args.viscosity*(1.0 + np.exp(-1.0*(t-ramp_time/2.0)))) )
     # Update boundary conditions
-    #u_in.t = t
-    #k_in.t = t
-    #e_in.t = t
+    if t<=ramp_time:
+        u_in.t = t
+        k_in.t = t
+        e_in.t = t
+    else:
+        u_in.t = ramp_time
+        k_in.t = ramp_time
+        e_in.t = ramp_time
     norm_k = norm(k_e.sub(0),'l2')
     norm_e = norm(k_e.sub(1),'l2')
+    #norm_nut = norm(0.09*k_e.sub(0)**2/k_e.sub(1),'l2')
     info("Eddy momentum is: %g" %(norm_k))
     info("Eddy energy is: %g" %(norm_e))
+    #info("Eddy viscosity is: %g" %(norm_nut))
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
@@ -379,6 +390,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         u_out, p_out = w.split()
         ufile << u_out
         pfile << p_out
+        kefile << k_e
 
     # Update variables at previous time level
     w0.assign(w)
