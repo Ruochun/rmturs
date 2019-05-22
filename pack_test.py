@@ -134,9 +134,9 @@ Gamma1().mark(boundary_markers, 1) # inlet facets
 Gamma2().mark(boundary_markers, 2) # outlet facet
 ds = Measure("ds", domain=mesh, subdomain_data=boundary_markers)
 
-distance_markers = MeshFunction("size_t", mesh, mesh.topology().dim()-1) # the marker for distance computation
-distance_markers.set_all(4)
-Gamma0().mark(distance_markers, 0)
+#distance_markers = MeshFunction("size_t", mesh, mesh.topology().dim()-1) # the marker for distance computation
+#distance_markers.set_all(4)
+#Gamma0().mark(distance_markers, 0)
 
 # Build Taylor-Hood function space
 P2 = VectorElement("Lagrange", mesh.ufl_cell(), 1)
@@ -148,7 +148,7 @@ W = FunctionSpace(mesh, MixedElement([P2, P1]))
 W_turb = FunctionSpace(mesh, MixedElement([P3, P4]))
 W_scalar = FunctionSpace(mesh, P3)
 
-ramp_time = 14.0
+ramp_time = 10000.0
 u0 = 1.0
 u_in = Expression(("u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)","0.0"),u0=u0,t=0.0,ramp_time=ramp_time,degree=2)
 # Navier-stokes bc
@@ -200,7 +200,7 @@ k_e0 = interpolate(Expression(("eps","eps"),eps=1e-5,degree=1),W_turb)
 (k0_, e0_) = split(k_e0)
 
 #dist2bnd = Function(W_scalar)
-dist2bnd = getDistance(W_scalar, distance_markers)
+dist2bnd = getDistance(W_scalar, boundary_markers)
  
 info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
@@ -230,15 +230,21 @@ tau_lsic = tau_supg#*vnorm**2
 # Nonlinear equation
 small_r = 1e-7
 deno_tol = 1e-5
-nu_t = Cmu*(k0_**2)/e0_
+Rt = k0_**2/(nu*e0_)
+Ry = k0_**(0.5)*dist2bnd/nu
+f_mu = (1.0 - exp(-0.0165*Ry))**2*(1.0 + 20.5/Rt)
+f_1 = 1.0 #+ (0.05/f_mu)**3    #FIXME: f_mu not added, it's dangerous
+f_2 = 1.0 - exp(-Rt**2)
+
+nu_t = Cmu*(k0_**2)/e0_ * f_mu
 #nu_t = Cmu*k0_
 #nu_t = conditional( lt(abs(e0_), deno_tol), project(Constant(0.0), W_scalar), Cmu*(k0_**2)/e0_)
 #nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
 sigma_e = 1.3
 Ceps = 0.07
 #C1 = 1.44
-C1 = 0.126
-C2 = 1.92
+C1 = 0.126 * f_1
+C2 = 1.92 * f_2
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
