@@ -130,6 +130,7 @@ P4 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 #W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
 W_turb = FunctionSpace(mesh, MixedElement([P3, P4]))
+W_turb_half = FunctionSpace(mesh, P3)
 
 ramp_time = 14.0
 u0 = 1.0
@@ -142,7 +143,7 @@ bcu = [bc00, bc1]
 
 # BC for turbulence models k and e
 bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
-bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
+#bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
 
 Cmu = 0.09
 turb_intensity = 0.05
@@ -156,7 +157,8 @@ bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
 # k-e BCs in a package
 #bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
-bcke = [bc_ine, bc_ink]
+bcke = [bc_nsk, bc_ink, bc_ine]
+#bcke = [bc_ine, bc_ink]
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -208,7 +210,10 @@ tau_lsic = tau_supg#*vnorm**2
 
 # Nonlinear equation
 small_r = 1e-7
-nu_t = Cmu*(k0_**2)/e0_
+deno_tol = 1e-5
+#nu_t = Cmu*(k0_**2)/e0_
+nu_t = Cmu*k0_
+#nu_t = conditional( lt(abs(e0_), deno_tol), project(Constant(0.0), W_turb_half), Cmu*(k0_**2)/e0_)
 #nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
 sigma_e = 1.3
 Ceps = 0.07
@@ -226,13 +231,17 @@ F = (
     #- p_*div(v)
     + q*div(u_)
 )*dx
-F_k = (idt*(k_ - k0_)*vk + dot(u_, grad(k_))*vk + nu_t*dot(grad(k_), grad(vk))\
+F_k = (\
+	idt*(k_ - k0_)*vk \
+	+ dot(u_, grad(k_))*vk + nu_t*dot(grad(k_), grad(vk))\
         - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
-F_e = (idt*(e_ - e0_)*ve + dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
+F_e = (\
+	idt*(e_ - e0_)*ve \
+	+ dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
         - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
-        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
-        + C2*(e0_**2/k0_)*ve)*dx
-        #+ C2*(e_**2)*ve)*dx
+        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx\
+        #+ C2*(e0_**2/k0_)*ve)*dx\
+        + C2*(e0_)*ve)*dx
 F = F + F_stab
 F_ke = F_k + F_e
 # Jacobian
@@ -335,8 +344,8 @@ else:
 #if rank == 0:
 ufile = File(args.out_folder+"/velocity.pvd")
 pfile = File(args.out_folder+"/pressure.pvd")
-kefile = File(args.out_folder+"/k_epsilon.pvd")
-
+kfile = File(args.out_folder+"/k.pvd")
+efile = File(args.out_folder+"/epsilon.pvd")
 # Solve problem
 t = 0.0
 time_iters = 0
@@ -388,9 +397,11 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
 
     if (time_iters % args.ts_per_out==0)or(time_iters == 1):
         u_out, p_out = w.split()
+        k_out, e_out = k_e.split()
         ufile << u_out
         pfile << p_out
-        kefile << k_e
+        kfile << k_out
+        efile << e_out
 
     # Update variables at previous time level
     w0.assign(w)
