@@ -74,6 +74,19 @@ class rmtursNewtonSolver(NewtonSolver):
         del self._problem
         return r
 
+def getDistance(W, markers):
+    w = Function(W)
+    v = TestFunction(W)
+    u = TrialFunction(W)
+    bc0 = DirichletBC(W, 0.0, markers, 0)
+    bcu = [bc0]
+    f = Constant(1.0)
+    F = inner(grad(u), grad(v))*dx - f*v*dx
+    a, L = lhs(F), rhs(F)
+    solve(a == L, w, bcs=bcu)
+    return w
+
+
 parameters["form_compiler"]["quadrature_degree"] = 3
 parameters["std_out_all_processes"] = False
 rank = commmpi.Get_rank()
@@ -105,12 +118,12 @@ class Gamma0(SubDomain):
 # Inlet bc
 class Gamma1(SubDomain):
     def inside(self, x, on_boundary):
-        return on_boundary and x[0]<eps
+        return on_boundary and x[0]<-1.0+eps
 
 # Oultet bc
 class Gamma2(SubDomain):
     def inside(self, x, on_boundary):
-        return on_boundary and (x[0]>4.0-eps)# or x[0]<-1.0+eps)
+        return on_boundary and (x[0]>5.0-eps)# or x[0]<-1.0+eps)
 
 
 
@@ -121,6 +134,9 @@ Gamma1().mark(boundary_markers, 1) # inlet facets
 Gamma2().mark(boundary_markers, 2) # outlet facet
 ds = Measure("ds", domain=mesh, subdomain_data=boundary_markers)
 
+distance_markers = MeshFunction("size_t", mesh, mesh.topology().dim()-1) # the marker for distance computation
+distance_markers.set_all(4)
+Gamma0().mark(distance_markers, 0)
 
 # Build Taylor-Hood function space
 P2 = VectorElement("Lagrange", mesh.ufl_cell(), 1)
@@ -130,13 +146,13 @@ P4 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 #W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
 W_turb = FunctionSpace(mesh, MixedElement([P3, P4]))
-W_turb_half = FunctionSpace(mesh, P3)
+W_scalar = FunctionSpace(mesh, P3)
 
 ramp_time = 14.0
 u0 = 1.0
-u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(t/ramp_time)","0.0","0.0"),u0=u0,t=0.0,ramp_time=ramp_time,degree=2)
+u_in = Expression(("u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)","0.0"),u0=u0,t=0.0,ramp_time=ramp_time,degree=2)
 # Navier-stokes bc
-bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
+bc00 = DirichletBC(W.sub(0), (0.0, 0.0), boundary_markers, 0)
 
 bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
 bcu = [bc00, bc1]
@@ -150,8 +166,8 @@ turb_intensity = 0.05
 turb_lengthscale = 0.038*1.0
 #k_in = 1.5*(u0*turb_intensity)**2
 #e_in = Cmu*(k_in**1.5)/turb_lengthscale
-k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,degree=2)
-e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
+k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,degree=2)
+e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
 bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
 bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
@@ -167,7 +183,7 @@ info("Dimension of the function space: %g" % W.dim())
 (u, p) = TrialFunctions(W)
 (v, q) = TestFunctions(W)
 w = Function(W)
-w = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
+w = interpolate(Expression(("eps","eps","0.0"),eps=1e-10,degree=1),W)
 w0 = Function(W)
 #w0 = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
 (u_, p_) = split(w)
@@ -183,6 +199,9 @@ k_e0 = interpolate(Expression(("eps","eps"),eps=1e-5,degree=1),W_turb)
 (k_, e_) = split(k_e)
 (k0_, e0_) = split(k_e0)
 
+#dist2bnd = Function(W_scalar)
+dist2bnd = getDistance(W_scalar, distance_markers)
+ 
 info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
 #nu = Constant(args.viscosity)
@@ -211,9 +230,9 @@ tau_lsic = tau_supg#*vnorm**2
 # Nonlinear equation
 small_r = 1e-7
 deno_tol = 1e-5
-#nu_t = Cmu*(k0_**2)/e0_
-nu_t = Cmu*k0_
-#nu_t = conditional( lt(abs(e0_), deno_tol), project(Constant(0.0), W_turb_half), Cmu*(k0_**2)/e0_)
+nu_t = Cmu*(k0_**2)/e0_
+#nu_t = Cmu*k0_
+#nu_t = conditional( lt(abs(e0_), deno_tol), project(Constant(0.0), W_scalar), Cmu*(k0_**2)/e0_)
 #nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
 sigma_e = 1.3
 Ceps = 0.07
@@ -239,9 +258,9 @@ F_e = (\
 	idt*(e_ - e0_)*ve \
 	+ dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
         - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
-        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx\
-        #+ C2*(e0_**2/k0_)*ve)*dx\
-        + C2*(e0_)*ve)*dx
+        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
+        + C2*(e0_**2/k0_)*ve)*dx
+        #+ C2*(e0_)*ve)*dx
 F = F + F_stab
 F_ke = F_k + F_e
 # Jacobian
