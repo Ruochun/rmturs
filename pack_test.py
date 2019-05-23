@@ -211,8 +211,8 @@ tau_lsic = tau_supg#*vnorm**2
 # Nonlinear equation
 small_r = 1e-7
 deno_tol = 1e-5
-#nu_t = Cmu*(k0_**2)/e0_
-nu_t = Cmu*k0_
+nu_t = Cmu*(k0_**2)/e0_
+#nu_t = Cmu*k0_
 #nu_t = conditional( lt(abs(e0_), deno_tol), project(Constant(0.0), W_turb_half), Cmu*(k0_**2)/e0_)
 #nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
 sigma_e = 1.3
@@ -239,9 +239,9 @@ F_e = (\
 	idt*(e_ - e0_)*ve \
 	+ dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
         - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
-        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx\
-        #+ C2*(e0_**2/k0_)*ve)*dx\
-        + C2*(e0_)*ve)*dx
+        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
+        + C2*(e0_**2/k0_)*ve)*dx
+        #+ C2*(e0_)*ve)*dx
 F = F + F_stab
 F_ke = F_k + F_e
 # Jacobian
