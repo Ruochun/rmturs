@@ -87,7 +87,7 @@ def getDistance(W, markers):
     return w
 
 
-parameters["form_compiler"]["quadrature_degree"] = 3
+parameters["form_compiler"]["quadrature_degree"] = 2
 parameters["std_out_all_processes"] = False
 rank = commmpi.Get_rank()
 root = 0
@@ -201,7 +201,9 @@ k_e0 = interpolate(Expression(("eps","eps"),eps=1e-5,degree=1),W_turb)
 
 #dist2bnd = Function(W_scalar)
 dist2bnd = getDistance(W_scalar, boundary_markers)
- 
+n = FacetNormal(mesh)
+tangent = as_vector([n[1], -n[0]])
+
 info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
 #nu = Constant(args.viscosity)
@@ -245,12 +247,12 @@ Ceps = 0.07
 #C1 = 1.44
 C1 = 0.126 * f_1
 C2 = 1.92 * f_2
-MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
+MomEqn = idt*(u_ - u0_) - div((nu+nu_t)*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_+2.0/3.0*k_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
 F = (
       idt*inner(u_ - u0_, v)
-    + (nu+nu_t)*inner(grad(u_), grad(v)) + inner(outer(grad(nu_t), v), grad(u_)) + dot(v, grad(u_)*grad(nu_t))
-    #+ nu*inner(grad(u_), grad(v))
+    #+ (nu+nu_t)*inner(grad(u_), grad(v)) + inner(outer(grad(nu_t), v), grad(u_)) + dot(v, grad(u_)*grad(nu_t))
+    + inner(grad(v), (nu+nu_t)*(grad(u_)+grad(u_).T))
     + inner(dot(grad(u_), u_), v)
     - (p_ + 2.0/3.0*k_)*div(v)
     #- p_*div(v)
@@ -262,11 +264,11 @@ F_k = (\
         - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
 F_e = (\
 	idt*(e_ - e0_)*ve \
-	+ dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
+        + dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
         - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
         #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
-        + C2*(e0_**2/k0_)*ve)*dx
-        #+ C2*(e0_)*ve)*dx
+        + C2*(e0_**2/k0_)*ve)*dx #- ve*(Ceps/Cmu)*nu_t*dot(tangent, grad(e_))*ds(0) #Neumann BC
+        #+ 1.92*(e0_)*ve)*dx
 F = F + F_stab
 F_ke = F_k + F_e
 # Jacobian
