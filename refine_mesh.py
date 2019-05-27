@@ -31,7 +31,7 @@ for i in range(1):
     Area2().mark(Mid_marker, True)
     mesh = refine(mesh, Mid_marker)
 
-for i in range(1):
+for i in range(0):
     Fine_marker = MeshFunction("bool", mesh, 1)
     Fine_marker.set_all(False)
     Area1().mark(Fine_marker, True)
