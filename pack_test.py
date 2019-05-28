@@ -173,8 +173,9 @@ bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
 # k-e BCs in a package
 #bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
-bcke = [bc_nsk, bc_ink, bc_ine]
+#bcke = [bc_nsk, bc_ink, bc_ine]
 #bcke = [bc_ine, bc_ink]
+bcke = [bc_nsk]
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -189,13 +190,14 @@ w0 = Function(W)
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
 
+ke_ini = 1e-10
 (k, e) = TrialFunctions(W_turb)
 (vk, ve) = TestFunctions(W_turb)
 k_e = Function(W_turb)
 #k_e = interpolate(Expression(("k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W_turb)
-k_e = interpolate(Expression(("eps","eps"),eps=1e-5,degree=1),W_turb)
+k_e = interpolate(Expression(("eps","eps"),eps=ke_ini,degree=1),W_turb)
 k_e0 = Function(W_turb)
-k_e0 = interpolate(Expression(("eps","eps"),eps=1e-5,degree=1),W_turb)
+k_e0 = interpolate(Expression(("eps","eps"),eps=ke_ini,degree=1),W_turb)
 (k_, e_) = split(k_e)
 (k0_, e0_) = split(k_e0)
 
@@ -238,38 +240,53 @@ f_mu = (1.0 - exp(-0.0165*Ry))**2*(1.0 + 20.5/Rt)
 f_1 = 1.0 #+ (0.05/f_mu)**3    #FIXME: f_mu not added, it's dangerous
 f_2 = 1.0 - exp(-Rt**2)
 
-nu_t = Cmu*(k0_**2)/e0_ * f_mu
+Cmu = Cmu #* f_mu
+nu_t = Cmu*(k0_**2)/e0_
 #nu_t = Cmu*k0_
 #nu_t = conditional( lt(abs(e0_), deno_tol), project(Constant(0.0), W_scalar), Cmu*(k0_**2)/e0_)
 #nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
 sigma_e = 1.3
 Ceps = 0.07
 #C1 = 1.44
-C1 = 0.126 * f_1
-C2 = 1.92 * f_2
+C1 = 0.126 #* f_1
+C2 = 1.92 #* f_2
 MomEqn = idt*(u_ - u0_) - div((nu+nu_t)*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_+2.0/3.0*k_)
+MomEqn_base = idt*(u_ - u0_) - div(nu*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
+F_stab_base = (tau_supg*inner(grad(v)*u_,MomEqn_base) + tau_pspg*inner(grad(q),MomEqn_base) + tau_lsic*div(v)*div(u_))*dx
 F = (
       idt*inner(u_ - u0_, v)
     #+ (nu+nu_t)*inner(grad(u_), grad(v)) + inner(outer(grad(nu_t), v), grad(u_)) + dot(v, grad(u_)*grad(nu_t))
     + inner(grad(v), (nu+nu_t)*(grad(u_)+grad(u_).T))
+    #+ inner(grad(v), nu*(grad(u_)+grad(u_).T))
     + inner(dot(grad(u_), u_), v)
     - (p_ + 2.0/3.0*k_)*div(v)
     #- p_*div(v)
     + q*div(u_)
 )*dx
+F_base = (
+      idt*inner(u_ - u0_, v)
+    #+ (nu+nu_t)*inner(grad(u_), grad(v)) + inner(outer(grad(nu_t), v), grad(u_)) + dot(v, grad(u_)*grad(nu_t))
+    #+ inner(grad(v), (nu+nu_t)*(grad(u_)+grad(u_).T))
+    + inner(grad(v), nu*(grad(u_)+grad(u_).T))
+    + inner(dot(grad(u_), u_), v)
+    #- (p_ + 2.0/3.0*k_)*div(v)
+    - p_*div(v)
+    + q*div(u_)
+)*dx
 F_k = (\
 	idt*(k_ - k0_)*vk \
 	+ dot(u_, grad(k_))*vk + nu_t*dot(grad(k_), grad(vk))\
-        - nu_t*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
+        - (Cmu*k_**2/e0_)*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
 F_e = (\
 	idt*(e_ - e0_)*ve \
         + dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
         - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
         #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
-        + C2*(e0_**2/k0_)*ve)*dx #- ve*(Ceps/Cmu)*nu_t*dot(tangent, grad(e_))*ds(0) #Neumann BC
+        + C2*(e_**2/k0_)*ve)*dx #- ve*(Ceps/Cmu)*nu_t*dot(tangent, grad(e_))*ds(0) #Neumann BC
         #+ 1.92*(e0_)*ve)*dx
 F = F + F_stab
+F_base = F_base + F_stab_base
 F_ke = F_k + F_e
 # Jacobian
 if args.nls == "picard":
@@ -282,6 +299,7 @@ if args.nls == "picard":
     )*dx
 elif args.nls == "newton":
     J = derivative(F, w)
+    J_base = derivative(F_base, w)
     J_ke = derivative(F_ke, k_e)
     #J_ke = lhs(F_ke)
     #F_ke = rhs(F_ke)
@@ -315,7 +333,7 @@ if args.pcd_variant == "BRM2":
 #assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
 #problem = PCDNonlinearProblem(pcd_assembler)
 
-NS_assembler = rmtursAssembler(J, F, bcu)
+NS_assembler = rmtursAssembler(J_base, F_base, bcu)
 problem = rmtursNonlinearProblem(NS_assembler)
  
 ke_assembler = rmtursAssembler(J_ke, F_ke, bcke)
@@ -378,6 +396,8 @@ t = 0.0
 time_iters = 0
 krylov_iters = 0
 solution_time = 0.0
+NS_changed = False
+NS_change_time = 0.0
 
 while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     # Move to current time level
@@ -405,6 +425,11 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         u_in.t = ramp_time
         k_in.t = ramp_time
         e_in.t = ramp_time
+    if (not(NS_changed))and(t>=NS_change_time):
+        NS_assembler = rmtursAssembler(J, F, bcu)
+        problem = rmtursNonlinearProblem(NS_assembler)
+        NS_changed = True
+    
     norm_k = norm(k_e.sub(0),'l2')
     norm_e = norm(k_e.sub(1),'l2')
     #norm_nut = norm(0.09*k_e.sub(0)**2/k_e.sub(1),'l2')
@@ -417,8 +442,9 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     with Timer("Solve") as t_solve:
         info("Solving N-S problem:")
         newton_iters, converged = solver.solve(problem, w.vector())
-        info("Solving k-e problem:")
-        ke_solver.solve(ke_problem, k_e.vector())
+        if NS_changed:
+            info("Solving k-e problem:")
+            ke_solver.solve(ke_problem, k_e.vector())
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
 
