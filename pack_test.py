@@ -159,15 +159,15 @@ bcu = [bc00, bc1]
 
 # BC for turbulence models k and e
 bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
-#bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
+bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
 
 Cmu = 0.09
 turb_intensity = 0.05
 turb_lengthscale = 0.038*1.0
-#k_in = 1.5*(u0*turb_intensity)**2
-#e_in = Cmu*(k_in**1.5)/turb_lengthscale
-k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,degree=2)
-e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
+k_in = Expression("1.5*pow(u0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,degree=1)
+e_in = Expression("Cmu*pow(1.5*pow(u0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=1)
+#k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,degree=2)
+#e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
 bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
 bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
@@ -175,7 +175,7 @@ bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 #bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
 #bcke = [bc_nsk, bc_ink, bc_ine]
 #bcke = [bc_ine, bc_ink]
-bcke = [bc_nsk]
+bcke = [bc_nsk, bc_nse]
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -190,7 +190,7 @@ w0 = Function(W)
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
 
-ke_ini = 1e-10
+ke_ini = 1e-9
 (k, e) = TrialFunctions(W_turb)
 (vk, ve) = TestFunctions(W_turb)
 k_e = Function(W_turb)
@@ -276,15 +276,19 @@ F_base = (
 )*dx
 F_k = (\
 	idt*(k_ - k0_)*vk \
-	+ dot(u_, grad(k_))*vk + nu_t*dot(grad(k_), grad(vk))\
-        - (Cmu*k_**2/e0_)*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
+	+ dot(u_, grad(k_))*vk\
+        + nu_t*dot(grad(k_), grad(vk))\
+        - (Cmu*k_**2/e0_)*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk)\
+        + e_*vk\
+        )*dx
 F_e = (\
 	idt*(e_ - e0_)*ve \
-        + dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
+        + dot(u_, grad(e_))*ve\
+        + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
         - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
-        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
-        + C2*(e_**2/k0_)*ve)*dx #- ve*(Ceps/Cmu)*nu_t*dot(tangent, grad(e_))*ds(0) #Neumann BC
-        #+ 1.92*(e0_)*ve)*dx
+        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve)\
+        + C2*(e_**2/k0_)*ve 
+        )*dx
 F = F + F_stab
 F_base = F_base + F_stab_base
 F_ke = F_k + F_e
@@ -356,8 +360,8 @@ linear_solver.set_from_options()
 
 PETScOptions.clear()
 ke_linear_solver = PETScKrylovSolver()
-ke_linear_solver.parameters["relative_tolerance"] = 1e-5
-ke_linear_solver.parameters["absolute_tolerance"] = 1e-10
+ke_linear_solver.parameters["relative_tolerance"] = 1e-16
+ke_linear_solver.parameters["absolute_tolerance"] = 1e-30
 ke_linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
@@ -377,7 +381,7 @@ solver.parameters["maximum_iterations"] = 3
 
 # Set up k-e solver
 ke_solver = rmtursNewtonSolver(ke_linear_solver)
-ke_solver.parameters["relative_tolerance"] = 1e-4
+ke_solver.parameters["relative_tolerance"] = 1e-15
 ke_solver.parameters["error_on_nonconvergence"] = False
 ke_solver.parameters["maximum_iterations"] = 1
 
