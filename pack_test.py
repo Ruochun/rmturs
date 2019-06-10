@@ -96,7 +96,9 @@ for i in range(args.level):
 ##################################
 #### Boundary & design domain ####
 ##################################
-eps = 1e-6
+eps = 1e-7
+"""
+# The cube in the middle of channel example BCs
 # No-slip bc
 class Gamma0(SubDomain):
     def inside(self, x, on_boundary):
@@ -111,14 +113,36 @@ class Gamma1(SubDomain):
 class Gamma2(SubDomain):
     def inside(self, x, on_boundary):
         return on_boundary and (x[0]>4.0-eps)# or x[0]<-1.0+eps)
+"""
+# bump example BCs
+class Gamma0(SubDomain):  #no-slip
+    def inside(self, x, on_boundary):
+        return on_boundary 
 
+class Gamma1(SubDomain):  #bump
+    def inside(self, x, on_boundary):
+        return on_boundary and (x[2]>=eps) and (x[2]<=0.2-eps) and (x[1]>0.1) and (x[1]<0.6) 
 
+class Gamma2(SubDomain): #slip
+    def inside(self, x, on_boundary):
+        return on_boundary and ((x[2]<eps)or(x[2]>0.2-eps))
+
+# Inlet bc
+class Gamma3(SubDomain):
+    def inside(self, x, on_boundary):
+        return on_boundary and x[0]<eps and x[1]>eps and (x[1]<0.7-eps)
+
+# Oultet bc
+class Gamma4(SubDomain):
+    def inside(self, x, on_boundary):
+        return on_boundary and (x[0]>1.5-eps)
 
 boundary_markers = MeshFunction("size_t", mesh, mesh.topology().dim()-1)
 boundary_markers.set_all(4)        # interior facets
-Gamma0().mark(boundary_markers, 0) # no-slip facets
-Gamma1().mark(boundary_markers, 1) # inlet facets
-Gamma2().mark(boundary_markers, 2) # outlet facet
+Gamma0().mark(boundary_markers, 0) # side no-slip facets
+Gamma1().mark(boundary_markers, 1) # bump facets
+Gamma2().mark(boundary_markers, 2) # slip facet
+Gamma3().mark(boundary_markers, 3) # inlet facet
 ds = Measure("ds", domain=mesh, subdomain_data=boundary_markers)
 
 
@@ -129,19 +153,15 @@ P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
 
 u0 = 1.0
-u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
+ramp_time = 15.0
+#u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
+u_in = Expression(("u0*(t/ramp_time)","0.0","0.0"),u0=u0,t=0.0,ramp_time=ramp_time,degree=2)
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
-
-bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
-bcu = [bc00, bc1]
-"""
-# Artificial BC for PCD preconditioner
-if args.pcd_variant == "BRM1":
-    bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 1)
-elif args.pcd_variant == "BRM2":
-    bc_pcd = DirichletBC(W.sub(1), 0.0, boundary_markers, 2)
-"""
+bc01 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 1)
+bc_slip = DirichletBC(W.sub(0).sub(2), 0.0, boundary_markers, 2)
+bc_in = DirichletBC(W.sub(0), u_in, boundary_markers, 3)
+bcu = [bc00, bc01, bc_slip, bc_in]
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -157,19 +177,12 @@ w0 = Function(W)
 
 info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
-#nu = Constant(args.viscosity)
-final_nu = args.viscosity
-#nu = final_nu
-nu = Expression("nu",nu=1000*final_nu,degree=2,domain=mesh)
+nu = Expression("nu",nu=args.viscosity,degree=1,domain=mesh)
 idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
-#ramp_time = 6.0/(u0*0.5)
 
 info("Courant number: Co = %g ~ %g" % (u0*args.dt/mesh.hmax(), u0*args.dt/mesh.hmin()))
-#w.interpolate(Constant((0.01,0.01,0.0)))
-#vnorm = sqrt(dot(u0_,u0_))
-#vnorm = u0_.vector().norm("l2")
-vnorm = norm(w.sub(0),"l2")
+# vnorm = norm(w.sub(0),"l2")
 # SUPG & PSPG stabilization parameters
 h_vgn = mesh.hmin()
 h_rgn = mesh.hmin()
@@ -205,36 +218,6 @@ if args.nls == "picard":
     )*dx
 elif args.nls == "newton":
     J = derivative(F, w)
-    #J_pc = None #derivative(F+F_stab, w)
-
-# Add stabilization for AMG 00-block
-#J_pc = None
-"""
-if args.ls == "iterative":
-    delta = StabilizationParameterSD(w.sub(0), nu)
-    J_pc = J + delta*inner(dot(grad(u), u_), dot(grad(v), u_))*dx
-elif args.ls == "direct":
-    J_pc = None
-"""
-
-"""
-# PCD operators
-mu = idt*inner(u, v)*dx
-mp = 1.0/(nu)*p*q*dx
-kp = 1.0/(nu)*(dot(grad(p), u_) + idt*p)*q*dx
-ap = inner(grad(p), grad(q))*dx
-if args.pcd_variant == "BRM2":
-    n = FacetNormal(mesh)
-    ds = Measure("ds", subdomain_data=boundary_markers)
-    # TODO: What about the reaction term? Does it appear here?
-    kp -= 1.0/nu*dot(u_, n)*p*q*ds(1)
-    #kp -= Constant(1.0/nu)*dot(u_, n)*p*q*ds(0)  # TODO: Is this beneficial?
-"""
-# Collect forms to define nonlinear problem
-#pcd_assembler = PCDAssembler(J, F, bcu,
-#                             J_pc, ap=ap, kp=kp, mp=mp, bcs_pcd=bc_pcd)
-#assert pcd_assembler.get_pcd_form("gp").phantom # pressure grad obtained from J
-#problem = PCDNonlinearProblem(pcd_assembler)
 
 NS_assembler = rmtursAssembler(J, F, bcu)
 problem = rmtursNonlinearProblem(NS_assembler)
@@ -244,7 +227,7 @@ problem = rmtursNonlinearProblem(NS_assembler)
 PETScOptions.clear()
 linear_solver = PETScKrylovSolver()
 linear_solver.parameters["relative_tolerance"] = 1e-4
-linear_solver.parameters["absolute_tolerance"] = 1e-6
+linear_solver.parameters["absolute_tolerance"] = 1e-12
 linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 
@@ -252,7 +235,7 @@ PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
     PETScOptions.set("ksp_type", "fgmres")
     PETScOptions.set("ksp_gmres_restart", 10)
-    PETScOptions.set("ksp_max_it", 40)
+    PETScOptions.set("ksp_max_it", 100)
     PETScOptions.set("preconditioner", "jacobi")
     #PETScOptions.set("nonzero_initial_guess", True)
 
@@ -264,7 +247,7 @@ linear_solver.set_from_options()
 solver = rmtursNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 1e-3
 solver.parameters["error_on_nonconvergence"] = False
-solver.parameters["maximum_iterations"] = 3
+solver.parameters["maximum_iterations"] = 5
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
 else:
@@ -294,10 +277,13 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         else:
             nu.nu = args.viscosity
     """
-    nu.nu = final_nu
-    info("Viscosity: %g" % nu.nu)
+    # nu.nu = args.viscosity
+    # info("Viscosity: %g" % nu.nu)
     # Update boundary conditions
-    u_in.t = t
+    if t<ramp_time:
+        u_in.t = t
+    else:
+        u_in.t = ramp_time
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
