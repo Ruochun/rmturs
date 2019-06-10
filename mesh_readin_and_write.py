@@ -12,9 +12,9 @@ box_2 = Box(Point(1.0, 1.0, 1.0), Point(2.0, 0.0, 0.0))
 box_tot = box_1 + box_2
 mesh_tot = generate_mesh(box_tot, 32)
 """
-mesh = Mesh('bump.xml')
+mesh = Mesh('mesh_lshape.xml')
 #mesh = Mesh()
-#fid = HDF5File(commmpi, 'bump.xml', 'r')
+#fid = HDF5File(commmpi, 'bump_local_refined.h5', 'r')
 #fid.read(mesh, 'mesh', False)
 #fid.close()
 File("./mesh_temp/mesh.pvd") << mesh
