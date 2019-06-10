@@ -92,7 +92,7 @@ except:
 
 for i in range(args.level):
     mesh = refine(mesh)
-
+commmpi.Barrier()
 ##################################
 #### Boundary & design domain ####
 ##################################
