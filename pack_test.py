@@ -145,6 +145,7 @@ P3 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 P4 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 #W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
+W_vel = FunctionSpace(mesh, P2)
 W_turb = FunctionSpace(mesh, MixedElement([P3, P4]))
 W_scalar = FunctionSpace(mesh, P3)
 
@@ -158,8 +159,8 @@ bc1 = DirichletBC(W.sub(0), u_in, boundary_markers, 1)
 bcu = [bc00, bc1]
 
 # BC for turbulence models k and e
-bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
-bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
+bc_nsk = DirichletBC(W_scalar, 0.0, boundary_markers, 0)
+bc_nse = DirichletBC(W_scalar, 0.0, boundary_markers, 0)
 
 Cmu = 0.09
 turb_intensity = 0.05
@@ -168,14 +169,17 @@ k_in = Expression("1.5*pow(u0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_
 e_in = Expression("Cmu*pow(1.5*pow(u0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=1)
 #k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,degree=2)
 #e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
-bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
-bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
+bc_ink = DirichletBC(W_scalar, k_in, boundary_markers, 1)
+bc_ine = DirichletBC(W_scalar, e_in, boundary_markers, 1)
 
 # k-e BCs in a package
-#bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
+bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
 #bcke = [bc_nsk, bc_ink, bc_ine]
 #bcke = [bc_ine, bc_ink]
-bcke = [bc_nsk, bc_nse]
+#bcke = [bc_nsk, bc_nse]
+bck = [bc_nsk, bc_ink]
+bce = [bc_nse, bc_ine]
+bcL = []
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -189,17 +193,23 @@ w0 = Function(W)
 #w0 = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
+L = TrialFunction(W_vel)
+L_ = Function(W_vel)
+vL = TestFunction(W_vel)
 
-ke_ini = 1e-9
-(k, e) = TrialFunctions(W_turb)
-(vk, ve) = TestFunctions(W_turb)
-k_e = Function(W_turb)
-#k_e = interpolate(Expression(("k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W_turb)
-k_e = interpolate(Expression(("eps","eps"),eps=ke_ini,degree=1),W_turb)
-k_e0 = Function(W_turb)
-k_e0 = interpolate(Expression(("eps","eps"),eps=ke_ini,degree=1),W_turb)
-(k_, e_) = split(k_e)
-(k0_, e0_) = split(k_e0)
+ke_ini = 1e-2
+k = TrialFunction(W_scalar)
+e = TrialFunction(W_scalar)
+vk = TestFunction(W_scalar)
+ve = TestFunction(W_scalar)
+k_ = Function(W_scalar)
+e_ = Function(W_scalar)
+k0_ = Function(W_scalar)
+e0_ = Function(W_scalar)
+k_ = interpolate(Expression("eps",eps=ke_ini,degree=1),W_scalar)
+k0_ = interpolate(Expression("eps",eps=ke_ini,degree=1),W_scalar)
+e_ = interpolate(Expression("eps",eps=ke_ini,degree=1),W_scalar)
+e0_ = interpolate(Expression("eps",eps=ke_ini,degree=1),W_scalar)
 
 #dist2bnd = Function(W_scalar)
 dist2bnd = getDistance(W_scalar, boundary_markers)
@@ -232,23 +242,22 @@ tau_pspg = tau_supg
 tau_lsic = tau_supg#*vnorm**2
 
 # Nonlinear equation
-small_r = 1e-7
-deno_tol = 1e-5
-Rt = k0_**2/(nu*e0_)
-Ry = k0_**(0.5)*dist2bnd/nu
-f_mu = (1.0 - exp(-0.0165*Ry))**2*(1.0 + 20.5/Rt)
-f_1 = 1.0 #+ (0.05/f_mu)**3    #FIXME: f_mu not added, it's dangerous
-f_2 = 1.0 - exp(-Rt**2)
+omega_k = 0.5
+omega_e = 0.5
+ReT = k_**2/(nu*e_)
+f_mu = exp(-3.4/(1.0+ReT/50.0)**2)
+f_2 = 1.0 - 0.3*exp(-(ReT**2))
 
-Cmu = Cmu #* f_mu
-nu_t = Cmu*(k0_**2)/e0_
+#Cmu = Cmu #* f_mu
+nu_t = f_mu*Cmu*(k_**2)/e_
 #nu_t = Cmu*k0_
 #nu_t = conditional( lt(abs(e0_), deno_tol), project(Constant(0.0), W_scalar), Cmu*(k0_**2)/e0_)
 #nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
+sigma_k = 1.0
 sigma_e = 1.3
-Ceps = 0.07
-#C1 = 1.44
-C1 = 0.126 #* f_1
+#Ceps = 0.07
+C1 = 1.44
+#C1 = 0.126 #* f_1
 C2 = 1.92 #* f_2
 MomEqn = idt*(u_ - u0_) - div((nu+nu_t)*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_+2.0/3.0*k_)
 MomEqn_base = idt*(u_ - u0_) - div(nu*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_)
@@ -275,23 +284,28 @@ F_base = (
     + q*div(u_)
 )*dx
 F_k = (\
-	idt*(k_ - k0_)*vk \
-	+ dot(u_, grad(k_))*vk\
-        + nu_t*dot(grad(k_), grad(vk))\
-        - (Cmu*k_**2/e0_)*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk)\
-        + e_*vk\
-        )*dx
+	idt*(k - k_)*vk \
+	+ 0.5*dot(u_, grad(k))*vk\
+    + 0.5*dot(u_, grad(k_))*vk\
+    - 0.5*(nu+nu_t/sigma_k)*dot(grad(k), grad(vk))\
+    - 0.5*(nu+nu_t/sigma_k)*dot(grad(k_), grad(vk))\
+    - p_*vk\
+    + e_*k/k_*vk\
+    - 2.0*nu*(grad(k_**0.5))**2*vk\
+    )*dx
 F_e = (\
-	idt*(e_ - e0_)*ve \
-        + dot(u_, grad(e_))*ve\
-        + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
-        - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
-        #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve)\
-        + C2*(e_**2/k0_)*ve 
-        )*dx
+	idt*(e - e_)*ve \
+	+ 0.5*dot(u_, grad(e))*ve\
+    + 0.5*dot(u_, grad(e_))*ve\
+    - 0.5*(nu+nu_t/sigma_e)*dot(grad(e), grad(ve))\
+    - 0.5*(nu+nu_t/sigma_e)*dot(grad(e_), grad(ve))\
+    - (C1*p_ - f_2*C2*e)*e_/k_*ve\
+    - 2*nu*nu_t*L_**2*ve\
+    )*dx
+F_L = dot(L, vL)*dx + inner(grad(u_), grad(vL))*dx
 F = F + F_stab
 F_base = F_base + F_stab_base
-F_ke = F_k + F_e
+#F_ke = F_k + F_e
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -304,7 +318,9 @@ if args.nls == "picard":
 elif args.nls == "newton":
     J = derivative(F, w)
     J_base = derivative(F_base, w)
-    J_ke = derivative(F_ke, k_e)
+    a_k, L_k = lhs(F_k), rhs(F_k)
+    a_e, L_e = lhs(F_e), rhs(F_e)
+    a_L, L_L = lhs(F_L), rhs(F_L)
     #J_ke = lhs(F_ke)
     #F_ke = rhs(F_ke)
 
@@ -340,9 +356,6 @@ if args.pcd_variant == "BRM2":
 NS_assembler = rmtursAssembler(J_base, F_base, bcu)
 problem = rmtursNonlinearProblem(NS_assembler)
  
-ke_assembler = rmtursAssembler(J_ke, F_ke, bcke)
-ke_problem = rmtursNonlinearProblem(ke_assembler)
-
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
 linear_solver = PETScKrylovSolver()
@@ -358,32 +371,11 @@ if args.ls == "iterative":
     #PETScOptions.set("nonzero_initial_guess", True)
 linear_solver.set_from_options()
 
-PETScOptions.clear()
-ke_linear_solver = PETScKrylovSolver()
-ke_linear_solver.parameters["relative_tolerance"] = 1e-16
-ke_linear_solver.parameters["absolute_tolerance"] = 1e-30
-ke_linear_solver.parameters['error_on_nonconvergence'] = False
-PETScOptions.set("ksp_monitor")
-if args.ls == "iterative":
-    PETScOptions.set("ksp_type", "gmres")
-    PETScOptions.set("ksp_gmres_restart", 10)
-    PETScOptions.set("ksp_max_it", 50)
-    PETScOptions.set("preconditioner", "default")
-    #PETScOptions.set("nonzero_initial_guess", True)
-ke_linear_solver.set_from_options()
-
-
 # Set up nonlinear solver
 solver = rmtursNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 1e-3
 solver.parameters["error_on_nonconvergence"] = False
-solver.parameters["maximum_iterations"] = 3
-
-# Set up k-e solver
-ke_solver = rmtursNewtonSolver(ke_linear_solver)
-ke_solver.parameters["relative_tolerance"] = 1e-15
-ke_solver.parameters["error_on_nonconvergence"] = False
-ke_solver.parameters["maximum_iterations"] = 1
+solver.parameters["maximum_iterations"] = 5
 
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
@@ -395,13 +387,14 @@ ufile = File(args.out_folder+"/velocity.pvd")
 pfile = File(args.out_folder+"/pressure.pvd")
 kfile = File(args.out_folder+"/k.pvd")
 efile = File(args.out_folder+"/epsilon.pvd")
+Lfile = File(args.out_folder+"/L.pvd")
 # Solve problem
 t = 0.0
 time_iters = 0
 krylov_iters = 0
 solution_time = 0.0
 NS_changed = False
-NS_change_time = 0.0
+NS_change_time = 5.0
 
 while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     # Move to current time level
@@ -434,11 +427,10 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         problem = rmtursNonlinearProblem(NS_assembler)
         NS_changed = True
     
-    norm_k = norm(k_e.sub(0),'l2')
-    norm_e = norm(k_e.sub(1),'l2')
-    #norm_nut = norm(0.09*k_e.sub(0)**2/k_e.sub(1),'l2')
-    info("Eddy momentum is: %g" %(norm_k))
-    info("Eddy energy is: %g" %(norm_e))
+    #norm_k = norm(k_,'l2')
+    #norm_e = norm(e_,'l2')
+    #info("Eddy momentum is: %g" %(norm_k))
+    #info("Eddy energy is: %g" %(norm_e))
     #info("Eddy viscosity is: %g" %(norm_nut))
 
     # Solve the nonlinear problem
@@ -446,23 +438,54 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     with Timer("Solve") as t_solve:
         info("Solving N-S problem:")
         newton_iters, converged = solver.solve(problem, w.vector())
+        L_problem = LinearVariationalProblem(a_L, L_L, L_, bcL)
+        L_solver = LinearVariationalSolver(L_problem)
+        L_solver.solve()
         if NS_changed:
             info("Solving k-e problem:")
-            ke_solver.solve(ke_problem, k_e.vector())
+            for j in range(2):
+                k_vec = k_.vector()[:]
+                e_vec = e_.vector()[:]
+                np.place(e_vec, e_vec<1e-50*args.viscosity, 1e-50*args.viscosity)
+                e_.vector()[:] = e_vec
+
+                k_problem = LinearVariationalProblem(a_k, L_k, k_, bck)
+                k_solver = LinearVariationalSolver(k_problem)
+                k_solver.solve()
+                k_.assign(k_*omega_k + k0_*(1.0-omega_k))
+                e_problem = LinearVariationalProblem(a_e, L_e, e_, bce)
+                e_solver = LinearVariationalSolver(e_problem)
+                e_solver.solve()
+                e_.assign(e_*omega_e + e0_*(1.0-omega_e))
+                k0_.assign(k_)
+                e0_.assign(e_)
+            
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
 
     if (time_iters % args.ts_per_out==0)or(time_iters == 1):
         u_out, p_out = w.split()
-        k_out, e_out = k_e.split()
+        #k_out, e_out = k_e.split()
         ufile << u_out
         pfile << p_out
-        kfile << k_out
-        efile << e_out
+        kfile << k_
+        efile << e_
+        Lfile << L_
 
     # Update variables at previous time level
     w0.assign(w)
-    k_e0.assign(k_e)
+    #k0_.assign(k_e)
+    #nu_t = conditional( gt(abs(nu_t),1e100*args.viscosity), project(Constant(1e100*args.viscosity),W_scalar), nu_t)
+    #e_.assign(Cmu*k_**2/nu_t)
+    k_vec = k_.vector()[:]
+    e_vec = e_.vector()[:]
+    #nu_vec = np.divide(Cmu*np.square(k_vec), e_vec)
+    #np.place(nu_vec, nu_vec>1e100*args.viscosity, 1e100*args.viscosity)
+    np.place(e_vec, e_vec<1e-50*args.viscosity, 1e-50*args.viscosity)
+    #e_vec = np.divide(Cmu*np.square(k_vec), nu_vec)
+    e_.vector()[:] = e_vec
+    
+    
 
 
 # Report timings
