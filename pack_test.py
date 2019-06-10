@@ -151,7 +151,8 @@ P2 = VectorElement("Lagrange", mesh.ufl_cell(), 1)
 P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 #W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
-
+n = FacetNormal(mesh)
+flow_direction = Constant((1.0,0.0,0.0))
 u0 = 1.0
 ramp_time = 15.0
 #u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
@@ -207,6 +208,9 @@ F = (
 )*dx
 F_VMS = (dot(v, dot(u_prime, grad(u_))) - dot(dot(u_prime, grad(v)), u_prime))*dx
 F = F + F_stab + F_VMS
+
+I = Identity(3)
+drag = dot(flow_direction, dot(-p_*I + nu*(grad(u_)+grad(u_).T), flow_direction))*ds(1)
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -256,7 +260,8 @@ else:
 #if rank == 0:
 ufile = File(args.out_folder+"/velocity.pvd")
 pfile = File(args.out_folder+"/pressure.pvd")
-
+#dragfile = File(args.out_folder+"/drag.txt")
+drag_t = []
 # Solve problem
 t = 0.0
 time_iters = 0
@@ -300,6 +305,9 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     # Update variables at previous time level
     w0.assign(w)
     #k_e0.assign(k_e)
+    F_d = assemble(drag)
+    info("Drag = %g" % (F_d))
+    drag_t.append(2.0*F_d/0.01)
 
 
 # Report timings
@@ -334,4 +342,5 @@ plot(p, title="pressure", mode="warp")
 pyplot.savefig("figure_warp_size{}_rank{}.pdf".format(size, rank))
 pyplot.show()
 """
-
+for coef in drag_t:
+    print(coef)
