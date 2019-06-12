@@ -92,7 +92,7 @@ except:
 
 for i in range(args.level):
     mesh = refine(mesh)
-commmpi.Barrier()
+#commmpi.Barrier()
 ##################################
 #### Boundary & design domain ####
 ##################################
@@ -210,7 +210,7 @@ F_VMS = (dot(v, dot(u_prime, grad(u_))) - dot(dot(u_prime, grad(v)), u_prime))*d
 F = F + F_stab + F_VMS
 
 I = Identity(3)
-drag = dot(flow_direction, dot(-p_*I + nu*(grad(u_)+grad(u_).T), flow_direction))*ds(1)
+drag = dot(flow_direction, dot(p_*I - nu*(grad(u_)+grad(u_).T), n))*ds(1)
 # Jacobian
 if args.nls == "picard":
     J = (
