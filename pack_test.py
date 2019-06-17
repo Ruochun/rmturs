@@ -159,7 +159,7 @@ bcu = [bc00, bc1]
 
 # BC for turbulence models k and e
 bc_nsk = DirichletBC(W_turb.sub(0), 0.0, boundary_markers, 0)
-#bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
+bc_nse = DirichletBC(W_turb.sub(1), 0.0, boundary_markers, 0)
 
 Cmu = 0.09
 turb_intensity = 0.05
@@ -172,10 +172,10 @@ bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
 bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
 
 # k-e BCs in a package
-#bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
+bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
 #bcke = [bc_nsk, bc_ink, bc_ine]
 #bcke = [bc_ine, bc_ink]
-bcke = [bc_nsk]
+#bcke = [bc_nsk, bc_nse]
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -243,13 +243,16 @@ f_2 = 1.0 - exp(-Rt**2)
 Cmu = Cmu #* f_mu
 nu_t = Cmu*(k0_**2)/e0_
 #nu_t = Cmu*k0_
-#nu_t = conditional( lt(abs(e0_), deno_tol), project(Constant(0.0), W_scalar), Cmu*(k0_**2)/e0_)
+nu_t = conditional( lt(nu_t, 1e-4*nu), 1e-4*nu, nu_t)
 #nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
 sigma_e = 1.3
 Ceps = 0.07
 #C1 = 1.44
 C1 = 0.126 #* f_1
 C2 = 1.92 #* f_2
+gamma_k = conditional( lt(Cmu*k0_/nu_t, 0.0), 0.0, Cmu*k0_/nu_t)
+gamma_e = conditional( lt(C2*e0_/k0_, 0.0), 0.0, C2*e0_/k0_)
+C1k = conditional( lt(C1*k0_, 0.0), 0.0, C1*k0_)
 MomEqn = idt*(u_ - u0_) - div((nu+nu_t)*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_+2.0/3.0*k_)
 MomEqn_base = idt*(u_ - u0_) - div(nu*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
@@ -276,14 +279,16 @@ F_base = (
 )*dx
 F_k = (\
 	idt*(k_ - k0_)*vk \
-	+ dot(u_, grad(k_))*vk + nu_t*dot(grad(k_), grad(vk))\
-        - (Cmu*k_**2/e0_)*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
+	+ dot(u_, grad(k_))*vk + (nu_t+nu)*dot(grad(k_), grad(vk))\
+        - (nu_t)*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*vk) + e_*vk)*dx
 F_e = (\
 	idt*(e_ - e0_)*ve \
-        + dot(u_, grad(e_))*ve + (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
-        - C1*k_*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
+        + dot(u_, grad(e_))*ve\
+        #+ (Ceps/Cmu)*nu_t*dot(grad(e_), grad(ve))\
+        + (nu_t/sigma_e+nu)*dot(grad(e_), grad(ve))\
+        - C1k*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
         #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
-        + C2*(e_**2/k0_)*ve)*dx #- ve*(Ceps/Cmu)*nu_t*dot(tangent, grad(e_))*ds(0) #Neumann BC
+        + e_*gamma_e*ve)*dx #- ve*(Ceps/Cmu)*nu_t*dot(tangent, grad(e_))*ds(0) #Neumann BC
         #+ 1.92*(e0_)*ve)*dx
 F = F + F_stab
 F_base = F_base + F_stab_base
