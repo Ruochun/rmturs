@@ -277,6 +277,8 @@ F_base = (
     - p_*div(v)
     + q*div(u_)
 )*dx
+k_eqn = idt*(k_ - k0_) + dot(u_, grad(k_)) - nu_t*0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T) + e_
+e_eqn = idt*(e_ - e0_) + dot(u_, grad(e_)) - C1k*0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T) + e_*gamma_e
 F_k = (\
 	idt*(k_ - k0_)*vk \
 	+ dot(u_, grad(k_))*vk + (nu_t+nu)*dot(grad(k_), grad(vk))\
