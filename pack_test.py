@@ -224,12 +224,6 @@ vnorm = norm(w.sub(0),"l2")
 # SUPG & PSPG stabilization parameters
 h_vgn = mesh.hmin()
 h_rgn = mesh.hmin()
-tau_sugn1 = h_vgn/(2.0)
-tau_sugn2 = idt/2.0
-tau_sugn3 = h_rgn**2/(4.0*nu)
-tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
-tau_pspg = tau_supg
-tau_lsic = tau_supg#*vnorm**2
 
 # Nonlinear equation
 small_r = 1e-7
@@ -250,6 +244,16 @@ Ceps = 0.07
 #C1 = 1.44
 C1 = 0.126 #* f_1
 C2 = 1.92 #* f_2
+
+#tau_sugn1 = h_vgn/(2.0*dot(u0_,u0_))
+tau_sugn1 = h_vgn/2.0
+tau_sugn2 = idt/2.0
+tau_sugn3 = h_rgn**2/(4.0*(nu+nu_t))
+tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
+#tau_supg = (4.0*dot(u0_,u0_)**2/(h_vgn**2) + 4.0/(idt**2) + 16.0*(nu+nu_t)**2/(h_rgn**4))**(-0.5)
+tau_pspg = tau_supg
+tau_lsic = tau_supg#*dot(u0_,u0_)
+
 gamma_k = conditional( lt(Cmu*k0_/nu_t, 0.0), 0.0, Cmu*k0_/nu_t)
 gamma_e = conditional( lt(C2*e0_/k0_, 0.0), 0.0, C2*e0_/k0_)
 C1k = conditional( lt(C1*k0_, 0.0), 0.0, C1*k0_)
@@ -277,8 +281,10 @@ F_base = (
     - p_*div(v)
     + q*div(u_)
 )*dx
-k_eqn = idt*(k_ - k0_) + dot(u_, grad(k_)) - nu_t*0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T) + e_
-e_eqn = idt*(e_ - e0_) + dot(u_, grad(e_)) - C1k*0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T) + e_*gamma_e
+k_eqn = idt*(k_ - k0_) + dot(u_, grad(k_)) - nu_t*0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T) + e_ - div((nu+nu_t)*grad(k_))
+e_eqn = idt*(e_ - e0_) + dot(u_, grad(e_)) - C1k*0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T) + e_*gamma_e - div((nu+nu_t/sigma_e)*grad(e_))
+tau_k = tau_supg
+tau_e = tau_supg
 F_k = (\
 	idt*(k_ - k0_)*vk \
 	+ dot(u_, grad(k_))*vk + (nu_t+nu)*dot(grad(k_), grad(vk))\
@@ -292,9 +298,11 @@ F_e = (\
         #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
         + e_*gamma_e*ve)*dx #- ve*(Ceps/Cmu)*nu_t*dot(tangent, grad(e_))*ds(0) #Neumann BC
         #+ 1.92*(e0_)*ve)*dx
+F_k_stab = tau_k*dot(grad(vk),u_)*k_eqn*dx
+F_e_stab = tau_e*dot(grad(ve),u_)*e_eqn*dx
 F = F + F_stab
 F_base = F_base + F_stab_base
-F_ke = F_k + F_e
+F_ke = F_k + F_e + F_k_stab + F_e_stab
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -355,15 +363,15 @@ linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
     PETScOptions.set("ksp_type", "fgmres")
-    PETScOptions.set("ksp_gmres_restart", 10)
-    PETScOptions.set("ksp_max_it", 50)
+    PETScOptions.set("ksp_gmres_restart", 30)
+    PETScOptions.set("ksp_max_it", 100)
     PETScOptions.set("preconditioner", "default")
     #PETScOptions.set("nonzero_initial_guess", True)
 linear_solver.set_from_options()
 
 PETScOptions.clear()
 ke_linear_solver = PETScKrylovSolver()
-ke_linear_solver.parameters["relative_tolerance"] = 1e-5
+ke_linear_solver.parameters["relative_tolerance"] = 1e-6
 ke_linear_solver.parameters["absolute_tolerance"] = 1e-10
 ke_linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
@@ -384,7 +392,7 @@ solver.parameters["maximum_iterations"] = 3
 
 # Set up k-e solver
 ke_solver = rmtursNewtonSolver(ke_linear_solver)
-ke_solver.parameters["relative_tolerance"] = 1e-4
+ke_solver.parameters["relative_tolerance"] = 1e-5
 ke_solver.parameters["error_on_nonconvergence"] = False
 ke_solver.parameters["maximum_iterations"] = 1
 
