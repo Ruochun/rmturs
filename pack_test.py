@@ -121,7 +121,7 @@ class Gamma0(SubDomain):  #no-slip
 
 class Gamma1(SubDomain):  #bump
     def inside(self, x, on_boundary):
-        return on_boundary and (x[2]>=eps) and (x[2]<=0.2-eps) and (x[1]>0.1) and (x[1]<0.6) 
+        return on_boundary and (x[2]>=eps) and (x[2]<=0.2-eps) and (x[1]>0.1) and (x[1]<0.6) and (x[0]>=0.1) and (x[0]<=0.6) 
 
 class Gamma2(SubDomain): #slip
     def inside(self, x, on_boundary):
@@ -210,7 +210,7 @@ F_VMS = (dot(v, dot(u_prime, grad(u_))) - dot(dot(u_prime, grad(v)), u_prime))*d
 F = F + F_stab + F_VMS
 
 I = Identity(3)
-drag = dot(flow_direction, dot(p_*I - nu*(grad(u_)+grad(u_).T), n))*ds(1)
+drag = dot(flow_direction, dot(p_*I + nu*(grad(u_)+grad(u_).T), n))*ds(1)
 # Jacobian
 if args.nls == "picard":
     J = (
