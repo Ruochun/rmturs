@@ -165,7 +165,7 @@ bc_in = DirichletBC(W.sub(0), u_in, boundary_markers, 3)
 bcu = [bc00, bc01, bc_slip, bc_in]
 
 # Provide some info about the current problem
-info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
+info("Reynolds number: Re = %g" % (0.1*u0/args.viscosity))
 info("Dimension of the function space: %g" % W.dim())
 # Arguments and coefficients of the form
 (u, p) = TrialFunctions(W)
@@ -240,7 +240,7 @@ if args.ls == "iterative":
     PETScOptions.set("ksp_type", "fgmres")
     PETScOptions.set("ksp_gmres_restart", 10)
     PETScOptions.set("ksp_max_it", 100)
-    PETScOptions.set("preconditioner", "jacobi")
+    PETScOptions.set("preconditioner", "default")
     #PETScOptions.set("nonzero_initial_guess", True)
 
 
@@ -251,7 +251,7 @@ linear_solver.set_from_options()
 solver = rmtursNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 1e-3
 solver.parameters["error_on_nonconvergence"] = False
-solver.parameters["maximum_iterations"] = 5
+solver.parameters["maximum_iterations"] = 3
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
 else:
