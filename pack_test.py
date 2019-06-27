@@ -168,8 +168,8 @@ turb_lengthscale = 0.038*1.0
 #e_in = Cmu*(k_in**1.5)/turb_lengthscale
 k_in = Expression("1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2)",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,degree=2)
 e_in = Expression("Cmu*pow(1.5*pow(u0*(x[1])*(1.0-x[1])*4.0*(t/ramp_time)*turb_intensity,2),1.5)/turb_lengthscale",u0=u0,t=0.0,ramp_time=ramp_time,turb_intensity=turb_intensity,turb_lengthscale=turb_lengthscale,Cmu=Cmu,degree=2)
-bc_ink = DirichletBC(W_turb.sub(0), k_in, boundary_markers, 1)
-bc_ine = DirichletBC(W_turb.sub(1), e_in, boundary_markers, 1)
+bc_ink = DirichletBC(W_scalar, k_in, boundary_markers, 1)
+bc_ine = DirichletBC(W_scalar, e_in, boundary_markers, 1)
 
 # k-e BCs in a package
 bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
@@ -194,13 +194,23 @@ ke_ini = 1e-10
 (k, e) = TrialFunctions(W_turb)
 (vk, ve) = TestFunctions(W_turb)
 k_e = Function(W_turb)
-#k_e = interpolate(Expression(("k_in","0.09*pow(k_in,1.5)/0.038"),k_in=1.5*0.05**2,degree=2),W_turb)
 k_e = interpolate(Expression(("eps","eps"),eps=ke_ini,degree=1),W_turb)
 k_e0 = Function(W_turb)
 k_e0 = interpolate(Expression(("eps","eps"),eps=ke_ini,degree=1),W_turb)
 (k_, e_) = split(k_e)
 (k0_, e0_) = split(k_e0)
-
+"""
+vk = TestFunction(W_scalar)
+ve = TestFunction(W_scalar)
+k_ = Function(W_scalar)
+e_ = Function(W_scalar)
+k0_ = Function(W_scalar)
+e0_ = Function(W_scalar)
+k_ =  interpolate(Expression("eps",eps=ke_ini,degree=1),W_scalar)
+e_ =  interpolate(Expression("eps",eps=ke_ini,degree=1),W_scalar)
+k0_ =  interpolate(Expression("eps",eps=ke_ini,degree=1),W_scalar)
+e0_ =  interpolate(Expression("eps",eps=ke_ini,degree=1),W_scalar)
+"""
 #dist2bnd = Function(W_scalar)
 dist2bnd = getDistance(W_scalar, boundary_markers)
 n = FacetNormal(mesh)
@@ -254,9 +264,12 @@ tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
 tau_pspg = tau_supg
 tau_lsic = tau_supg#*dot(u0_,u0_)
 
-gamma_k = conditional( lt(Cmu*k0_/nu_t, 0.0), 0.0, Cmu*k0_/nu_t)
-gamma_e = conditional( lt(C2*e0_/k0_, 0.0), 0.0, C2*e0_/k0_)
-C1k = conditional( lt(C1*k0_, 0.0), 0.0, C1*k0_)
+#gamma_k = conditional( lt(Cmu*k0_/nu_t, 0.0), 0.0, Cmu*k0_/nu_t)
+gamma_k = Cmu*k0_/nu_t
+#gamma_e = conditional( lt(C2*e0_/k0_, 0.0), 0.0, C2*e0_/k0_)
+gamma_e = C2*e0_/k0_
+#C1k = conditional( lt(C1*k0_, 0.0), 0.0, C1*k0_)
+C1k = C1*k0_
 MomEqn = idt*(u_ - u0_) - div((nu+nu_t)*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_+2.0/3.0*k_)
 MomEqn_base = idt*(u_ - u0_) - div(nu*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
@@ -357,7 +370,7 @@ ke_problem = rmtursNonlinearProblem(ke_assembler)
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
 linear_solver = PETScKrylovSolver()
-linear_solver.parameters["relative_tolerance"] = 1e-4
+linear_solver.parameters["relative_tolerance"] = 1e-6
 linear_solver.parameters["absolute_tolerance"] = 1e-10
 linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
@@ -463,6 +476,13 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     krylov_iters += solver.krylov_iterations()
     solution_time += t_solve.stop()
 
+    # Update variables at previous time level
+    w0.assign(w)
+    ke_vec = k_e.vector()[:]
+    np.place(ke_vec, ke_vec<1e-10, 1e-10)
+    k_e.vector()[:] = ke_vec
+    k_e0.assign(k_e)
+    
     if (time_iters % args.ts_per_out==0)or(time_iters == 1):
         u_out, p_out = w.split()
         k_out, e_out = k_e.split()
@@ -470,10 +490,6 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         pfile << p_out
         kfile << k_out
         efile << e_out
-
-    # Update variables at previous time level
-    w0.assign(w)
-    k_e0.assign(k_e)
 
 
 # Report timings
