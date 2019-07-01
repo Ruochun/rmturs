@@ -92,6 +92,8 @@ parameters["std_out_all_processes"] = False
 rank = commmpi.Get_rank()
 root = 0
 # Load mesh from file and refine uniformly
+#mesh = RectangleMesh(Point(-1,0), Point(5, 1), 10, 10, "right/left")
+
 try:
     mesh = Mesh(args.mesh_file)
 except:
@@ -105,7 +107,6 @@ except:
 
 for i in range(args.level):
     mesh = refine(mesh)
-
 ##################################
 #### Boundary & design domain ####
 ##################################
@@ -190,7 +191,7 @@ w0 = Function(W)
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
 
-ke_ini = 1e-10
+ke_ini = 1e-5
 (k, e) = TrialFunctions(W_turb)
 (vk, ve) = TestFunctions(W_turb)
 k_e = Function(W_turb)
@@ -199,6 +200,10 @@ k_e0 = Function(W_turb)
 k_e0 = interpolate(Expression(("eps","eps"),eps=ke_ini,degree=1),W_turb)
 (k_, e_) = split(k_e)
 (k0_, e0_) = split(k_e0)
+#nu_t = Function(W_scalar)
+#nu_t = interpolate(Expression("eps",eps=1e-4*args.viscosity,degree=1),W_scalar)
+#kk_ = Function(W_scalar)
+#ee_ = Function(W_scalar)
 """
 vk = TestFunction(W_scalar)
 ve = TestFunction(W_scalar)
@@ -246,8 +251,7 @@ f_2 = 1.0 - exp(-Rt**2)
 
 Cmu = Cmu #* f_mu
 nu_t = Cmu*(k0_**2)/e0_
-#nu_t = Cmu*k0_
-nu_t = conditional( lt(nu_t, 1e-4*nu), 1e-4*nu, nu_t)
+#nu_t = conditional( lt(nu_t, 0.0), 0.0, nu_t)
 #nu_t = (Cmu*(k0_**2)/e0_)/(1.0+small_r*(Cmu*(k0_**2)/e0_))
 sigma_e = 1.3
 Ceps = 0.07
@@ -268,8 +272,10 @@ tau_lsic = tau_supg#*dot(u0_,u0_)
 gamma_k = Cmu*k0_/nu_t
 #gamma_e = conditional( lt(C2*e0_/k0_, 0.0), 0.0, C2*e0_/k0_)
 gamma_e = C2*e0_/k0_
+#gamma_e = C2*e_/k0_
 #C1k = conditional( lt(C1*k0_, 0.0), 0.0, C1*k0_)
-C1k = C1*k0_
+C1k = C1*k_
+#C1k = C1*k0_
 MomEqn = idt*(u_ - u0_) - div((nu+nu_t)*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_+2.0/3.0*k_)
 MomEqn_base = idt*(u_ - u0_) - div(nu*(grad(u_)+grad(u_).T)) + grad(u_)*u_ + grad(p_)
 F_stab = (tau_supg*inner(grad(v)*u_,MomEqn) + tau_pspg*inner(grad(q),MomEqn) + tau_lsic*div(v)*div(u_))*dx
@@ -309,7 +315,7 @@ F_e = (\
         + (nu_t/sigma_e+nu)*dot(grad(e_), grad(ve))\
         - C1k*(0.5*inner(grad(u_)+grad(u_).T, grad(u_)+grad(u_).T)*ve)\
         #+ C2*((e0_**2/k0_)/(1.0+small_r*(e0_**2/k0_))*ve))*dx
-        + e_*gamma_e*ve)*dx #- ve*(Ceps/Cmu)*nu_t*dot(tangent, grad(e_))*ds(0) #Neumann BC
+        + e_*gamma_e*ve)*dx
         #+ 1.92*(e0_)*ve)*dx
 F_k_stab = tau_k*dot(grad(vk),u_)*k_eqn*dx
 F_e_stab = tau_e*dot(grad(ve),u_)*e_eqn*dx
@@ -371,7 +377,7 @@ ke_problem = rmtursNonlinearProblem(ke_assembler)
 PETScOptions.clear()
 linear_solver = PETScKrylovSolver()
 linear_solver.parameters["relative_tolerance"] = 1e-6
-linear_solver.parameters["absolute_tolerance"] = 1e-10
+linear_solver.parameters["absolute_tolerance"] = 1e-12
 linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
@@ -385,7 +391,7 @@ linear_solver.set_from_options()
 PETScOptions.clear()
 ke_linear_solver = PETScKrylovSolver()
 ke_linear_solver.parameters["relative_tolerance"] = 1e-6
-ke_linear_solver.parameters["absolute_tolerance"] = 1e-10
+ke_linear_solver.parameters["absolute_tolerance"] = 1e-15
 ke_linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
@@ -407,18 +413,22 @@ solver.parameters["maximum_iterations"] = 3
 ke_solver = rmtursNewtonSolver(ke_linear_solver)
 ke_solver.parameters["relative_tolerance"] = 1e-5
 ke_solver.parameters["error_on_nonconvergence"] = False
-ke_solver.parameters["maximum_iterations"] = 1
+ke_solver.parameters["maximum_iterations"] = 3
 
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
 else:
     set_log_level(50)
+
+k_assigner = FunctionAssigner(W_scalar, W_turb.sub(0))
+e_assigner = FunctionAssigner(W_scalar, W_turb.sub(1))
 # files
 #if rank == 0:
 ufile = File(args.out_folder+"/velocity.pvd")
 pfile = File(args.out_folder+"/pressure.pvd")
 kfile = File(args.out_folder+"/k.pvd")
 efile = File(args.out_folder+"/epsilon.pvd")
+#nufile = File(args.out_folder+"/nu_t.pvd")
 # Solve problem
 t = 0.0
 time_iters = 0
@@ -479,9 +489,14 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     # Update variables at previous time level
     w0.assign(w)
     ke_vec = k_e.vector()[:]
-    np.place(ke_vec, ke_vec<1e-10, 1e-10)
+    np.place(ke_vec, ke_vec<1e-16, 1e-16)
     k_e.vector()[:] = ke_vec
     k_e0.assign(k_e)
+    #k_assigner.assign(kk_, k_e.sub(0))
+    #e_assigner.assign(ee_, k_e.sub(1))
+    #k_vec = kk_.vector()[:]
+    #e_vec = ee_.vector()[:]
+    #nu_t.vector()[:] = Cmu*np.divide(np.square(k_vec), e_vec)
     
     if (time_iters % args.ts_per_out==0)or(time_iters == 1):
         u_out, p_out = w.split()
@@ -490,6 +505,7 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
         pfile << p_out
         kfile << k_out
         efile << e_out
+        #nufile << nu_t
 
 
 # Report timings
