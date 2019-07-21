@@ -138,11 +138,12 @@ class Gamma4(SubDomain):
         return on_boundary and (x[0]>1.5-eps)
 
 boundary_markers = MeshFunction("size_t", mesh, mesh.topology().dim()-1)
-boundary_markers.set_all(4)        # interior facets
+boundary_markers.set_all(5)        # interior facets
 Gamma0().mark(boundary_markers, 0) # side no-slip facets
 Gamma1().mark(boundary_markers, 1) # bump facets
 Gamma2().mark(boundary_markers, 2) # slip facet
 Gamma3().mark(boundary_markers, 3) # inlet facet
+Gamma4().mark(boundary_markers, 4) # outlet facet
 ds = Measure("ds", domain=mesh, subdomain_data=boundary_markers)
 
 
@@ -154,7 +155,7 @@ W = FunctionSpace(mesh, MixedElement([P2, P1]))
 n = FacetNormal(mesh)
 flow_direction = Constant((1.0,0.0,0.0))
 u0 = 1.0
-ramp_time = 15.0
+ramp_time = 10.0
 #u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
 u_in = Expression(("u0*(t/ramp_time)","0.0","0.0"),u0=u0,t=0.0,ramp_time=ramp_time,degree=2)
 # Navier-stokes bc
@@ -210,7 +211,7 @@ F_VMS = (dot(v, dot(u_prime, grad(u_))) - dot(dot(u_prime, grad(v)), u_prime))*d
 F = F + F_stab + F_VMS
 
 I = Identity(3)
-drag = dot(flow_direction, dot(p_*I + nu*(grad(u_)+grad(u_).T), n))*ds(1)
+drag = dot(flow_direction, dot(n, p_*I - nu*(grad(u_)+grad(u_).T)))*ds(1)
 # Jacobian
 if args.nls == "picard":
     J = (
@@ -342,5 +343,3 @@ plot(p, title="pressure", mode="warp")
 pyplot.savefig("figure_warp_size{}_rank{}.pdf".format(size, rank))
 pyplot.show()
 """
-for coef in drag_t:
-    print(coef)
