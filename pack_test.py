@@ -195,7 +195,7 @@ bcu = [bc00, bc01, bc_slip, bc_in]
 info("Reynolds number: Re = %g" % (0.1*u0/args.viscosity))
 info("Dimension of the function space: %g" % W.dim())
 # Arguments and coefficients of the form
-init_ufield = 1e-10
+init_ufield = 0.1
 (u, p) = TrialFunctions(W)
 (v, q) = TestFunctions(W)
 w = Function(W)
@@ -215,12 +215,13 @@ info("Courant number: Co = %g ~ %g" % (u0*args.dt/mesh.hmax(), u0*args.dt/mesh.h
 h_vgn = mesh.hmin()
 h_rgn = mesh.hmin()
 #u0_norm = sqrt(dot(u0, u0))
-u0_norm2 = dot(u0, u0)
+u0_norm2 = dot(u0_, u0_)
 #tau_sugn1 = h_vgn/(2.0*u0_norm)
+tau_sugn1 = h_vgn/(2.0)
 tau_sugn2 = idt/2.0
 tau_sugn3 = h_rgn**2/(4.0*args.viscosity)
-#tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
-tau_supg = 1.0/sqrt(4.0*u0_norm2/h_vgn**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
+tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
+#tau_supg = 1.0/sqrt(4.0*u0_norm2/h_vgn**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
 tau_pspg = tau_supg
 tau_lsic = tau_supg*u0_norm2
 
