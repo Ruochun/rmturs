@@ -20,8 +20,10 @@ parser.add_argument("-l", type=int, dest="level", default=0,
                     help="level of mesh refinement")
 parser.add_argument("--nu", type=float, dest="viscosity", default=0.02,
                     help="kinematic viscosity")
-#parser.add_argument("--pcd", type=str, dest="pcd_variant", default="BRM1",
-#                    choices=["BRM1", "BRM2"], help="PCD variant")
+parser.add_argument("--ramp_type", type=str, dest="ramp_type", default="viscosity",
+                    choices=["viscosity", "velocity"], help="choose to ramp viscosity or velocity")
+parser.add_argument("--ramp_ts", type=int, dest="ramp_ts", default=1000,
+                    help="number of ramping time steps")
 parser.add_argument("--nls", type=str, dest="nls", default="newton",
                     choices=["picard", "newton"], help="nonlinear solver")
 parser.add_argument("--ls", type=str, dest="ls", default="iterative",
@@ -152,6 +154,8 @@ P2 = VectorElement("Lagrange", mesh.ufl_cell(), 1)
 P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
 #W = FunctionSpace(mesh, ((P2*P1)*P3)*P4)
 W = FunctionSpace(mesh, MixedElement([P2, P1]))
+#vel_space = FunctionSpace(mesh, P2)
+
 n = FacetNormal(mesh)
 flow_direction = Constant((1.0,0.0,0.0))
 u0 = 1.0
@@ -169,11 +173,13 @@ bcu = [bc00, bc01, bc_slip, bc_in]
 info("Reynolds number: Re = %g" % (0.1*u0/args.viscosity))
 info("Dimension of the function space: %g" % W.dim())
 # Arguments and coefficients of the form
+init_ufield = 1e-10
 (u, p) = TrialFunctions(W)
 (v, q) = TestFunctions(W)
 w = Function(W)
-w = interpolate(Expression(("eps","eps","eps","0.0"),eps=1e-10,degree=1),W)
+w = interpolate(Expression(("eps","eps","eps","0.0"),eps=init_ufield,degree=1),W)
 w0 = Function(W)
+w0 = interpolate(Expression(("eps","eps","eps","0.0"),eps=init_ufield,degree=1),W)
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
 
@@ -188,12 +194,15 @@ info("Courant number: Co = %g ~ %g" % (u0*args.dt/mesh.hmax(), u0*args.dt/mesh.h
 # SUPG & PSPG stabilization parameters
 h_vgn = mesh.hmin()
 h_rgn = mesh.hmin()
-tau_sugn1 = h_vgn/(2.0)
+#u0_norm = sqrt(dot(u0, u0))
+u0_norm2 = dot(u0, u0)
+#tau_sugn1 = h_vgn/(2.0*u0_norm)
 tau_sugn2 = idt/2.0
 tau_sugn3 = h_rgn**2/(4.0*args.viscosity)
-tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
+#tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
+tau_supg = 1.0/sqrt(4.0*u0_norm2/h_vgn**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
 tau_pspg = tau_supg
-tau_lsic = tau_supg#*vnorm**2
+tau_lsic = tau_supg*u0_norm2
 
 # Nonlinear equation
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
@@ -261,8 +270,6 @@ else:
 #if rank == 0:
 ufile = File(args.out_folder+"/velocity.pvd")
 pfile = File(args.out_folder+"/pressure.pvd")
-#dragfile = File(args.out_folder+"/drag.txt")
-drag_t = []
 # Solve problem
 t = 0.0
 time_iters = 0
@@ -305,10 +312,10 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
 
     # Update variables at previous time level
     w0.assign(w)
+
     #k_e0.assign(k_e)
     F_d = assemble(drag)
-    info("Drag = %g" % (F_d))
-    drag_t.append(2.0*F_d/0.01)
+    info("Drag coef = %g" % (2.0*F_d/0.01))
 
 
 # Report timings
