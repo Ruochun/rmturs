@@ -132,7 +132,7 @@ class Gamma0(SubDomain):  #no-slip
 
 class Gamma1(SubDomain):  #bump
     def inside(self, x, on_boundary):
-        return on_boundary and (x[2]>=eps) and (x[2]<=0.2-eps) and (x[1]>0.1) and (x[1]<0.6) and (x[0]>=0.1) and (x[0]<=0.6) 
+        return on_boundary and (x[2]>=eps) and (x[2]<=0.1+eps) and (x[1]>0.3-eps) and (x[1]<0.4+eps) and (x[0]>0.35-eps) and (x[0]<0.45+eps) 
 
 class Gamma2(SubDomain): #slip
     def inside(self, x, on_boundary):
@@ -179,7 +179,7 @@ elif ramp_token == 1:
         info("Warning: the viscosity is larger than 1, the solver will ramp up the viscosity, instead of ramp down.")
     ramp_time = args.dt*args.ramp_ts
     u_in = Expression(("u0","0.0","0.0"),u0=u0,degree=1)
-    nu = Expression("(nu-1.0)/ramp_time*t+1.0",nu=args.viscosity,t=0.0,ramp_time=ramp_time,degree=2,domain=mesh)
+    nu = Expression("(nu-start_nu)/ramp_time*t+start_nu",start_nu=0.02,nu=args.viscosity,t=0.0,ramp_time=ramp_time,degree=2,domain=mesh)
 else:
     u_in = Expression(("u0","0.0","0.0"),u0=u0,degree=1)
     nu = Expression("nu",nu=args.viscosity,degree=1,domain=mesh)
@@ -216,14 +216,15 @@ h_vgn = mesh.hmin()
 h_rgn = mesh.hmin()
 #u0_norm = sqrt(dot(u0, u0))
 u0_norm2 = dot(u0_, u0_)
+#u0_norm2 = (norm(w0.sub(0), "l2"))**2
 #tau_sugn1 = h_vgn/(2.0*u0_norm)
 tau_sugn1 = h_vgn/(2.0)
 tau_sugn2 = idt/2.0
 tau_sugn3 = h_rgn**2/(4.0*args.viscosity)
-tau_supg = (1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)**(-0.5)
-#tau_supg = 1.0/sqrt(4.0*u0_norm2/h_vgn**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
+#tau_supg = 1.0/sqrt(1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
+tau_supg = 1.0/sqrt(4.0/h_vgn**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
 tau_pspg = tau_supg
-tau_lsic = tau_supg*u0_norm2
+tau_lsic = h_vgn*u0_norm2#h_vgn/2.0*sqrt(u0_norm2)#tau_supg*u0_norm2
 
 # Nonlinear equation
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
@@ -261,7 +262,7 @@ problem = rmtursNonlinearProblem(NS_assembler)
 # Set up linear solver (GMRES with right preconditioning using Schur fact)
 PETScOptions.clear()
 linear_solver = PETScKrylovSolver()
-linear_solver.parameters["relative_tolerance"] = 1e-4
+linear_solver.parameters["relative_tolerance"] = 1e-5
 linear_solver.parameters["absolute_tolerance"] = 1e-12
 linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
@@ -282,7 +283,7 @@ linear_solver.set_from_options()
 solver = rmtursNewtonSolver(linear_solver)
 solver.parameters["relative_tolerance"] = 1e-3
 solver.parameters["error_on_nonconvergence"] = False
-solver.parameters["maximum_iterations"] = 3
+solver.parameters["maximum_iterations"] = 7
 if rank == 0:
     set_log_level(20) #INFO level, no warnings
 else:
