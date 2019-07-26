@@ -20,8 +20,8 @@ parser.add_argument("-l", type=int, dest="level", default=0,
                     help="level of mesh refinement")
 parser.add_argument("--nu", type=float, dest="viscosity", default=0.02,
                     help="kinematic viscosity")
-parser.add_argument("--ramp_type", type=str, dest="ramp_type", default="viscosity",
-                    choices=["viscosity", "velocity"], help="choose to ramp viscosity or velocity")
+parser.add_argument("--ramp_type", type=str, dest="ramp_type", default="none",
+                    choices=["viscosity", "velocity", "none"], help="choose to ramp viscosity or velocity")
 parser.add_argument("--ramp_ts", type=int, dest="ramp_ts", default=1000,
                     help="number of ramping time steps")
 parser.add_argument("--nls", type=str, dest="nls", default="newton",
@@ -94,6 +94,15 @@ except:
 
 for i in range(args.level):
     mesh = refine(mesh)
+
+if args.ramp_type == "viscosity":
+    ramp_token = 1
+elif args.ramp_type == "velocity":
+    ramp_token = 2
+else:
+    ramp_token = 0
+
+
 #commmpi.Barrier()
 ##################################
 #### Boundary & design domain ####
@@ -127,12 +136,12 @@ class Gamma1(SubDomain):  #bump
 
 class Gamma2(SubDomain): #slip
     def inside(self, x, on_boundary):
-        return on_boundary and ((x[2]<eps)or(x[2]>0.2-eps))
+        return on_boundary and ((x[1]<eps)or(x[1]>0.7-eps))
 
 # Inlet bc
 class Gamma3(SubDomain):
     def inside(self, x, on_boundary):
-        return on_boundary and x[0]<eps and x[1]>eps and (x[1]<0.7-eps)
+        return on_boundary and x[0]<eps #and x[1]>=eps and (x[1]<=0.7-eps)
 
 # Oultet bc
 class Gamma4(SubDomain):
@@ -159,13 +168,26 @@ W = FunctionSpace(mesh, MixedElement([P2, P1]))
 n = FacetNormal(mesh)
 flow_direction = Constant((1.0,0.0,0.0))
 u0 = 1.0
-ramp_time = 10.0
-#u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
-u_in = Expression(("u0*(t/ramp_time)","0.0","0.0"),u0=u0,t=0.0,ramp_time=ramp_time,degree=2)
+if ramp_token == 2:
+    #ramp_time = 10.0
+    ramp_time = args.dt*args.ramp_ts
+    #u_in = Expression(("u0*(x[1])*(1.0-x[1])*(x[2])*(1.0-x[2])*16.0*(1.0 - exp(-0.1*t))","0.0","0.0"),u0=u0,t=0.0,degree=2)
+    u_in = Expression(("u0*(t/ramp_time)","0.0","0.0"),u0=u0,t=0.0,ramp_time=ramp_time,degree=2)
+    nu = Expression("nu",nu=args.viscosity,degree=1,domain=mesh)
+elif ramp_token == 1:
+    if args.viscosity > 1.0:
+        info("Warning: the viscosity is larger than 1, the solver will ramp up the viscosity, instead of ramp down.")
+    ramp_time = args.dt*args.ramp_ts
+    u_in = Expression(("u0","0.0","0.0"),u0=u0,degree=1)
+    nu = Expression("(nu-1.0)/ramp_time*t+1.0",nu=args.viscosity,t=0.0,ramp_time=ramp_time,degree=2,domain=mesh)
+else:
+    u_in = Expression(("u0","0.0","0.0"),u0=u0,degree=1)
+    nu = Expression("nu",nu=args.viscosity,degree=1,domain=mesh)
+
 # Navier-stokes bc
 bc00 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 0)
 bc01 = DirichletBC(W.sub(0), (0.0, 0.0, 0.0), boundary_markers, 1)
-bc_slip = DirichletBC(W.sub(0).sub(2), 0.0, boundary_markers, 2)
+bc_slip = DirichletBC(W.sub(0).sub(1), 0.0, boundary_markers, 2)
 bc_in = DirichletBC(W.sub(0), u_in, boundary_markers, 3)
 bcu = [bc00, bc01, bc_slip, bc_in]
 
@@ -183,9 +205,7 @@ w0 = interpolate(Expression(("eps","eps","eps","0.0"),eps=init_ufield,degree=1),
 (u_, p_) = split(w)
 (u0_, p0_) = split(w0)
 
-info("Function space constructed")
 #u0_, p0_ = w0.split(True) #split using deepcopy
-nu = Expression("nu",nu=args.viscosity,degree=1,domain=mesh)
 idt = Constant(1.0/args.dt)
 h = CellDiameter(mesh)
 
@@ -281,22 +301,19 @@ while t < args.t_end and not near(t, args.t_end, 0.1*args.dt):
     t += args.dt
     time_iters += 1
     
-    # move from ramping to computing
-    """
-    if t < ramp_time:
-        if ramp_time/2.0 - t > 0:
-            nu.nu = (np.exp(-t) - np.exp(-ramp_time/2.0))*999.0*args.viscosity + args.viscosity
-
-        else:
-            nu.nu = args.viscosity
-    """
     # nu.nu = args.viscosity
     # info("Viscosity: %g" % nu.nu)
     # Update boundary conditions
-    if t<ramp_time:
-        u_in.t = t
-    else:
-        u_in.t = ramp_time
+    if ramp_token == 2:
+        if t<ramp_time:
+            u_in.t = t
+        else: 
+            u_in.t = ramp_time
+    elif ramp_token == 1:
+        if t<ramp_time:
+            nu.t = t
+        else:
+            nu.t = ramp_time
 
     # Solve the nonlinear problem
     info("t = {:g}, step = {:g}, dt = {:g}".format(t, time_iters, args.dt))
