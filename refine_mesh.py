@@ -17,26 +17,26 @@ class Area99(SubDomain):
     def inside(self, x, on_boundary):
         return True
 
-mesh = Mesh("bump_channel.xml")
+mesh = Mesh("bump.xml")
 
-for i in range(2):
+for i in range(1):
     Coarse_marker = MeshFunction("bool", mesh, 1)#mesh.topology().dim()-1)
     Coarse_marker.set_all(False)
     Area99().mark(Coarse_marker, True)
     mesh = refine(mesh, Coarse_marker)
 
-for i in range(1):
+for i in range(0):
     Mid_marker = MeshFunction("bool", mesh, 1)
     Mid_marker.set_all(False)
     Area2().mark(Mid_marker, True)
     mesh = refine(mesh, Mid_marker)
 
-for i in range(1):
+for i in range(0):
     Fine_marker = MeshFunction("bool", mesh, 1)
     Fine_marker.set_all(False)
     Area1().mark(Fine_marker, True)
     mesh = refine(mesh, Fine_marker)
 
-fid = HDF5File(comm,'bump_local_refined.h5','w')
+fid = HDF5File(comm,'bump_l-1.h5','w')
 fid.write(mesh,'mesh')
 fid.close()

@@ -177,6 +177,7 @@ bcke = [bc_nsk, bc_ink, bc_ine, bc_nse]
 #bcke = [bc_nsk, bc_ink, bc_ine]
 #bcke = [bc_ine, bc_ink]
 #bcke = [bc_nsk, bc_nse]
+#bcke = [bc_nsk]
 
 # Provide some info about the current problem
 info("Reynolds number: Re = %g" % (1.0*u0/args.viscosity))
@@ -244,9 +245,10 @@ h_rgn = mesh.hmin()
 small_r = 1e-7
 deno_tol = 1e-5
 Rt = k0_**2/(nu*e0_)
+#Rt = conditional( lt(Rt, 1e-16), 1e-16, Rt)
 Ry = k0_**(0.5)*dist2bnd/nu
 f_mu = (1.0 - exp(-0.0165*Ry))**2*(1.0 + 20.5/Rt)
-f_1 = 1.0 #+ (0.05/f_mu)**3    #FIXME: f_mu not added, it's dangerous
+f_1 = 1.0 + (0.05/f_mu)**3    #FIXME: f_mu not added, it's dangerous
 f_2 = 1.0 - exp(-Rt**2)
 
 Cmu = Cmu #* f_mu
@@ -390,8 +392,8 @@ linear_solver.set_from_options()
 
 PETScOptions.clear()
 ke_linear_solver = PETScKrylovSolver()
-ke_linear_solver.parameters["relative_tolerance"] = 1e-6
-ke_linear_solver.parameters["absolute_tolerance"] = 1e-15
+ke_linear_solver.parameters["relative_tolerance"] = 1e-7
+ke_linear_solver.parameters["absolute_tolerance"] = 1e-20
 ke_linear_solver.parameters['error_on_nonconvergence'] = False
 PETScOptions.set("ksp_monitor")
 if args.ls == "iterative":
