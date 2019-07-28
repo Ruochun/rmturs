@@ -212,19 +212,19 @@ h = CellDiameter(mesh)
 info("Courant number: Co = %g ~ %g" % (u0*args.dt/mesh.hmax(), u0*args.dt/mesh.hmin()))
 # vnorm = norm(w.sub(0),"l2")
 # SUPG & PSPG stabilization parameters
-h_vgn = mesh.hmin()
+h_ugn = mesh.hmax()
 h_rgn = mesh.hmin()
 #u0_norm = sqrt(dot(u0, u0))
 u0_norm2 = dot(u0_, u0_)
 #u0_norm2 = (norm(w0.sub(0), "l2"))**2
-#tau_sugn1 = h_vgn/(2.0*u0_norm)
-tau_sugn1 = h_vgn/(2.0)
+#tau_sugn1 = h_ugn/(2.0*u0_norm)
+tau_sugn1 = h_ugn/(2.0)
 tau_sugn2 = idt/2.0
 tau_sugn3 = h_rgn**2/(4.0*args.viscosity)
 #tau_supg = 1.0/sqrt(1.0/tau_sugn1**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
-tau_supg = 1.0/sqrt(4.0/h_vgn**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
+tau_supg = 1.0/sqrt(4.0/h_ugn**2 + 1.0/tau_sugn2**2 + 1.0/tau_sugn3**2)
 tau_pspg = tau_supg
-tau_lsic = h_vgn*u0_norm2#h_vgn/2.0*sqrt(u0_norm2)#tau_supg*u0_norm2
+tau_lsic = h_ugn/2.0*sqrt(u0_norm2)#tau_supg*u0_norm2
 
 # Nonlinear equation
 MomEqn = idt*(u_ - u0_) - div(nu*grad(u_)) + grad(u_)*u_ + grad(p_)
@@ -353,7 +353,7 @@ print(tab)
 #with open("table_pcdr_{}.txt".format(args.pcd_variant), "w") as f:
 #    f.write(tab)
 
-# Plot solution
+#rgs.out_folder+"/pressure.pvd") Plot solution
 #u, p = w.split()
 #size = MPI.size(mesh.mpi_comm())
 #rank = MPI.rank(mesh.mpi_comm())
